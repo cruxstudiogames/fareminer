@@ -478,7 +478,7 @@ export function FlightSearchPage() {
         </div>
 
         {/* Content area */}
-        <div className="flex-1 overflow-auto">
+        <div className={`flex-1 ${s.viewMode === 'map' ? 'relative' : 'overflow-auto'}`}>
           {s.viewMode === 'build' && (
             <QueryBuildTable combos={searchCombos} cacheFlags={comboCacheFlags} />
           )}

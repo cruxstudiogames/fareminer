@@ -6,11 +6,13 @@ import { formatCurrency } from '../../utils/formatCurrency';
 import { computeBezierArcSegments } from '../../utils/bezierArc';
 import type { FlightSearchResult } from '../../types';
 
-interface RouteSummary {
+/** A unique itinerary path: origin -> [stops in order] -> destination */
+interface RoutePath {
   origin: string;
   destination: string;
+  stops: string[]; // ordered stop codes for this specific path
   cheapestPrice: number;
-  waypoints: string[]; // intermediate stop codes
+  count: number;
 }
 
 interface FlightMapProps {
@@ -103,37 +105,35 @@ export function FlightMap({ results, onRouteSelect, selectedRoute, onAirportSele
       setInternalAirport(next);
     }
   }, [selectedAirport, onAirportSelect]);
-  // Build route summaries from results
-  const routeSummaries = useMemo<RouteSummary[]>(() => {
-    const routeMap = new Map<string, { prices: number[]; waypoints: Set<string> }>();
+
+  // Build unique route paths from results
+  const routePaths = useMemo<RoutePath[]>(() => {
+    const pathMap = new Map<string, { prices: number[]; stops: string[] }>();
     for (const r of results) {
-      const key = `${r.origin}-${r.destination}`;
-      if (!routeMap.has(key)) {
-        routeMap.set(key, { prices: [], waypoints: new Set() });
+      const stops = r.stopCodes ?? [];
+      const key = `${r.origin}|${stops.join(',')}|${r.destination}`;
+      if (!pathMap.has(key)) {
+        pathMap.set(key, { prices: [], stops });
       }
-      const entry = routeMap.get(key)!;
-      entry.prices.push(r.totalPrice);
-      // Collect intermediate stop codes as waypoints
-      if (r.stopCodes) {
-        for (const code of r.stopCodes) entry.waypoints.add(code);
-      }
+      pathMap.get(key)!.prices.push(r.totalPrice);
     }
-    return Array.from(routeMap.entries()).map(([key, val]) => {
-      const [origin, destination] = key.split('-');
+    return Array.from(pathMap.entries()).map(([key, val]) => {
+      const parts = key.split('|');
       return {
-        origin,
-        destination,
+        origin: parts[0],
+        destination: parts[2],
+        stops: val.stops,
         cheapestPrice: Math.min(...val.prices),
-        waypoints: Array.from(val.waypoints),
+        count: val.prices.length,
       };
     });
   }, [results]);
 
   const priceRange = useMemo(() => {
-    const prices = routeSummaries.map((r) => r.cheapestPrice);
+    const prices = routePaths.map((r) => r.cheapestPrice);
     if (prices.length === 0) return { min: 0, max: 0 };
     return { min: Math.min(...prices), max: Math.max(...prices) };
-  }, [routeSummaries]);
+  }, [routePaths]);
 
   const getRouteColor = (price: number): string => {
     if (priceRange.max === priceRange.min) return '#22C55E';
@@ -155,10 +155,10 @@ export function FlightMap({ results, onRouteSelect, selectedRoute, onAirportSele
     const waypointSet = new Set<string>();
     const cheapestAtAirport = new Map<string, number>();
 
-    for (const route of routeSummaries) {
+    for (const route of routePaths) {
       originSet.add(route.origin);
       destSet.add(route.destination);
-      for (const wp of route.waypoints) waypointSet.add(wp);
+      for (const wp of route.stops) waypointSet.add(wp);
 
       // Track cheapest price at each airport
       for (const code of [route.origin, route.destination]) {
@@ -184,19 +184,19 @@ export function FlightMap({ results, onRouteSelect, selectedRoute, onAirportSele
       });
     }
     return Array.from(map.values());
-  }, [routeSummaries]);
+  }, [routePaths]);
 
-  // Route arcs with waypoints
+  // Route arcs with stops
   const routeArcs = useMemo(() => {
-    return routeSummaries
+    return routePaths
       .map((route) => {
         const orig = airports[route.origin];
         const dest = airports[route.destination];
         if (!orig || !dest) return null;
 
-        // Build waypoint chain: origin -> waypoints -> destination
+        // Build point chain: origin -> stops -> destination
         const allPoints: [number, number][] = [[orig.lat, orig.lng]];
-        for (const wp of route.waypoints) {
+        for (const wp of route.stops) {
           const wpApt = airports[wp];
           if (wpApt) allPoints.push([wpApt.lat, wpApt.lng]);
         }
@@ -211,12 +211,12 @@ export function FlightMap({ results, onRouteSelect, selectedRoute, onAirportSele
 
         const isSelected = selectedRoute?.origin === route.origin && selectedRoute?.destination === route.destination;
         const isAirportHighlighted = selectedAirport
-          ? route.origin === selectedAirport || route.destination === selectedAirport
+          ? route.origin === selectedAirport || route.destination === selectedAirport || route.stops.includes(selectedAirport)
           : false;
         return { ...route, segments, isSelected, isAirportHighlighted };
       })
-      .filter(Boolean) as (RouteSummary & { segments: L.LatLngTuple[][]; isSelected: boolean; isAirportHighlighted: boolean })[];
-  }, [routeSummaries, selectedRoute, selectedAirport]);
+      .filter(Boolean) as (RoutePath & { segments: L.LatLngTuple[][]; isSelected: boolean; isAirportHighlighted: boolean })[];
+  }, [routePaths, selectedRoute, selectedAirport]);
 
   if (uniqueAirports.length === 0) {
     return (
@@ -227,11 +227,11 @@ export function FlightMap({ results, onRouteSelect, selectedRoute, onAirportSele
   }
 
   return (
-    <div className="flex-1 min-h-[300px] relative">
+    <div style={{ position: 'absolute', inset: 0 }}>
       <MapContainer
         center={[20, 0]}
         zoom={2}
-        style={{ height: '100%', width: '100%', minHeight: 300 }}
+        style={{ height: '100%', width: '100%' }}
         scrollWheelZoom={true}
       >
         <TileLayer
@@ -246,15 +246,16 @@ export function FlightMap({ results, onRouteSelect, selectedRoute, onAirportSele
             const color = getRouteColor(route.cheapestPrice);
             const highlighted = route.isSelected || route.isAirportHighlighted;
             const dimmed = selectedAirport && !route.isAirportHighlighted;
+            const stopsKey = route.stops.join(',');
             return route.segments.map((seg, segIdx) => (
               <Polyline
-                key={`${route.origin}-${route.destination}-${segIdx}-${lngOffset}`}
+                key={`${route.origin}-${stopsKey}-${route.destination}-${segIdx}-${lngOffset}`}
                 positions={seg.map(([lat, lng]) => [lat, lng + lngOffset] as L.LatLngTuple)}
                 pathOptions={{
                   color: highlighted ? '#2563EB' : color,
                   weight: highlighted ? 3.5 : 2,
                   opacity: dimmed ? 0.2 : highlighted ? 1 : 0.7,
-                  dashArray: undefined,
+                  dashArray: route.stops.length > 0 ? '6 4' : undefined,
                 }}
                 eventHandlers={
                   onRouteSelect
@@ -264,11 +265,12 @@ export function FlightMap({ results, onRouteSelect, selectedRoute, onAirportSele
               >
                 <Tooltip sticky>
                   <span style={{ fontWeight: 600 }}>{route.origin} → {route.destination}</span>
-                  {route.waypoints.length > 0 && (
-                    <><br /><span style={{ fontSize: 11, color: '#6b7280' }}>via {route.waypoints.join(', ')}</span></>
+                  {route.stops.length > 0 && (
+                    <><br /><span style={{ fontSize: 11, color: '#6b7280' }}>via {route.stops.join(', ')}</span></>
                   )}
                   <br />
                   {formatCurrency(route.cheapestPrice)}
+                  <span style={{ fontSize: 11, color: '#6b7280' }}> ({route.count} flight{route.count !== 1 ? 's' : ''})</span>
                 </Tooltip>
               </Polyline>
             ));
