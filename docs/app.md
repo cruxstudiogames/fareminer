@@ -9,7 +9,9 @@
 ## Credit system
 
 - Users can log in for free through google
--
+- Users can browse cached data from the last 24 hours
+- Users can be $5 USD for 1000 search credits to search for custom routes
+- Admin users have no restrictions on searches
 
 ## UI Layout
 
@@ -61,18 +63,15 @@ For pages with an outbound and inbound journey, the filters should be duplicated
 - Carrier filter (should be a dynamic tickbox of carriers from results, multi-select should be enabled, there should be an easy way to select all)
 - Dep time filter (between 00:00 and 24:00, a range slider is ideal)
 - Arr time filter (between 00:00 and 24:00, a range slider is ideal)
-
+- Departure day of week (MTWTFSS, default to all with no selections made)
 - Pages this applies to
 
-| Page       | Outbound | Inbound |
-| ---------- | -------- | ------- |
-| Time Sweep | Yes      | Yes     |
-| Scatter    | Yes      | Yes     |
-| Past       | Yes      | Yes     |
-
-- Route search (2 sets of filters)
-- Time Sweep (2 sets of filters)
-- Scatter Search (1 set of filter)
+| Page         | Outbound | Inbound                  |
+| ------------ | -------- | ------------------------ |
+| Route Search | Yes      | Yes, if return searched  |
+| Time Sweep   | Yes      | Yes, if return searched  |
+| Scatter      | Yes      | No                       |
+| Past         | Yes      | No, no concept of return |
 
 ## Page specific filters
 
