@@ -7,6 +7,7 @@ export interface User {
   name: string;
   picture: string | null;
   is_admin: number;
+  credits: number;
   created_at: string;
   last_login: string;
 }
@@ -36,6 +37,7 @@ export function findOrCreateUser(googleId: string, email: string, name: string, 
     name,
     picture: picture ?? null,
     is_admin: isAdmin,
+    credits: 0,
     created_at: now,
     last_login: now,
   };

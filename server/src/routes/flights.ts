@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { searchFlightsWithCache } from '../services/flightService.js';
+import { searchFlightsWithCache, type FlightSearchParams } from '../services/flightService.js';
+import { getCachedResults } from '../services/cacheService.js';
+import { deductCredit, getUserCredits } from '../services/creditService.js';
 
 export const flightsRouter = Router();
 
@@ -21,16 +23,48 @@ flightsRouter.get('/search', async (req, res) => {
       return;
     }
 
-    const results = await searchFlightsWithCache({
+    const searchParams: FlightSearchParams = {
       origin: String(origin),
       destination: String(destination),
       departureDate: String(departureDate),
       adults: Number(adults),
       currency: currency ? String(currency) : undefined,
       returnDate: returnDate ? String(returnDate) : undefined,
-    }, fresh === 'true', timeSweepId ? String(timeSweepId) : undefined, req.user?.id);
+    };
 
-    res.json({ results });
+    const isFresh = fresh === 'true';
+    const isAdmin = req.user?.is_admin === 1;
+
+    // Check if this will be a fresh API call (not cached)
+    if (!isAdmin) {
+      const cached = getCachedResults(searchParams);
+      if (!cached || isFresh) {
+        // This will cost a credit - check balance first
+        const credits = getUserCredits(req.user!.id);
+        if (credits <= 0) {
+          res.status(402).json({
+            error: 'Insufficient credits. Purchase more credits to search for custom routes.',
+            code: 'INSUFFICIENT_CREDITS',
+            credits: 0,
+          });
+          return;
+        }
+        // Deduct credit
+        deductCredit(req.user!.id);
+      }
+    }
+
+    const results = await searchFlightsWithCache(
+      searchParams,
+      isFresh,
+      timeSweepId ? String(timeSweepId) : undefined,
+      req.user?.id,
+    );
+
+    res.json({
+      results,
+      credits: isAdmin ? undefined : getUserCredits(req.user!.id),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('Flight search error:', message);

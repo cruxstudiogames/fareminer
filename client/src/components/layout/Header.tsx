@@ -1,14 +1,28 @@
-import { Plane, LogOut } from 'lucide-react';
+import { useState } from 'react';
+import { Plane, LogOut, Coins } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { logout } from '../../services/authService';
+import { purchaseCredits } from '../../services/creditService';
 
 export function Header() {
   const user = useAuthStore((s) => s.user);
+  const [purchasing, setPurchasing] = useState(false);
 
   const handleLogout = async () => {
     await logout();
     useAuthStore.getState().clearAuth();
     window.location.reload();
+  };
+
+  const handlePurchase = async () => {
+    setPurchasing(true);
+    try {
+      const url = await purchaseCredits();
+      window.location.href = url;
+    } catch {
+      alert('Failed to start purchase. Please try again.');
+      setPurchasing(false);
+    }
   };
 
   return (
@@ -23,6 +37,19 @@ export function Header() {
 
         {user && (
           <div className="flex items-center gap-1 sm:gap-2">
+            {!user.isAdmin && (
+              <div className="flex items-center gap-1 mr-1">
+                <Coins className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-xs font-medium text-gray-700">{user.credits}</span>
+                <button
+                  onClick={handlePurchase}
+                  disabled={purchasing}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium px-1.5 py-0.5 rounded hover:bg-blue-50 disabled:opacity-50"
+                >
+                  {purchasing ? '...' : 'Buy'}
+                </button>
+              </div>
+            )}
             {user.picture && (
               <img
                 src={user.picture}

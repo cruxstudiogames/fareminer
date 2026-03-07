@@ -5,13 +5,16 @@
 - Where possible auto fill in every UI field to make it easier to search with less clicks. For example dates could default to today + 1 and return to today + 8
 - Auto suggest dep and arr ports with most recently searched ones, add location name next to them as you type so it is easier to see we have the right one
 - It is very important that code / ui changes does not invalidate or delete cached results
+- UI responsiveness and ease of use is utmost important
 
 ## Credit system
 
 - Users can log in for free through google
 - Users can browse cached data from the last 24 hours
 - Users can be $5 USD for 1000 search credits to search for custom routes
-- Admin users have no restrictions on searches
+- Admin users have 10,000 search credits per month
+- Users can become admins if they contribute to the git repo and email is white listed (owner is decider of contribution worthiness)
+- Owner user has unlimited searches
 
 ## UI Layout
 

@@ -19,6 +19,20 @@ export default function App() {
       .catch(() => setUser(null));
   }, [setUser]);
 
+  // Handle return from Stripe checkout
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('credits') === 'success') {
+      // Refresh user to get updated credits
+      fetchCurrentUser().then((user) => {
+        if (user) setUser(user);
+      });
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (params.get('credits') === 'cancel') {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [setUser]);
+
   if (isLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-100">

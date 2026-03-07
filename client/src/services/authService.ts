@@ -4,6 +4,7 @@ export interface AuthUser {
   name: string;
   picture: string | null;
   isAdmin: boolean;
+  credits: number;
 }
 
 export async function loginWithGoogle(credential: string): Promise<AuthUser> {

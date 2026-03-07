@@ -1,4 +1,16 @@
 import type { FlightSearchParams, FlightSearchResult } from '../types';
+import { useAuthStore } from '../store/useAuthStore';
+
+interface FlightSearchResponse {
+  results: FlightSearchResult[];
+  credits?: number;
+}
+
+function updateCredits(credits?: number) {
+  if (credits !== undefined) {
+    useAuthStore.getState().setCredits(credits);
+  }
+}
 
 export async function searchFlights(
   params: FlightSearchParams
@@ -17,11 +29,15 @@ export async function searchFlights(
   const response = await fetch(`/api/flights/search?${query}`, { credentials: 'include' });
 
   if (!response.ok) {
-    const data = (await response.json().catch(() => ({}))) as { error?: string };
+    const data = (await response.json().catch(() => ({}))) as { error?: string; code?: string; credits?: number };
+    if (data.code === 'INSUFFICIENT_CREDITS') {
+      updateCredits(data.credits);
+    }
     throw new Error(data.error || `Search failed (${response.status})`);
   }
 
-  const data = (await response.json()) as { results: FlightSearchResult[] };
+  const data = (await response.json()) as FlightSearchResponse;
+  updateCredits(data.credits);
   return data.results;
 }
 
@@ -43,10 +59,14 @@ export async function searchFlightsForTimeSweep(
   const response = await fetch(`/api/flights/search?${query}`, { credentials: 'include' });
 
   if (!response.ok) {
-    const data = (await response.json().catch(() => ({}))) as { error?: string };
+    const data = (await response.json().catch(() => ({}))) as { error?: string; code?: string; credits?: number };
+    if (data.code === 'INSUFFICIENT_CREDITS') {
+      updateCredits(data.credits);
+    }
     throw new Error(data.error || `Search failed (${response.status})`);
   }
 
-  const data = (await response.json()) as { results: FlightSearchResult[] };
+  const data = (await response.json()) as FlightSearchResponse;
+  updateCredits(data.credits);
   return data.results;
 }

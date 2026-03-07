@@ -56,6 +56,7 @@ authRouter.post('/google', async (req, res) => {
         name: user.name,
         picture: user.picture,
         isAdmin: user.is_admin === 1,
+        credits: user.credits,
       },
     });
   } catch (err) {

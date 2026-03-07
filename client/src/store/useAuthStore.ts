@@ -11,6 +11,7 @@ interface AuthState {
 interface AuthActions {
   setUser: (user: AuthUser | null) => void;
   setLoading: (loading: boolean) => void;
+  setCredits: (credits: number) => void;
   clearAuth: () => void;
 }
 
@@ -29,6 +30,11 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
     }),
 
   setLoading: (isLoading) => set({ isLoading }),
+
+  setCredits: (credits) =>
+    set((state) => ({
+      user: state.user ? { ...state.user, credits } : null,
+    })),
 
   clearAuth: () =>
     set({

@@ -42,4 +42,21 @@ db.exec(`
 // Migration: add user_id to existing queries table
 try { db.exec('ALTER TABLE queries ADD COLUMN user_id INTEGER REFERENCES users(id)'); } catch { /* already exists */ }
 
+// Migration: add credits column to users table
+try { db.exec('ALTER TABLE users ADD COLUMN credits INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
+
+// Credit transactions ledger
+db.exec(`
+  CREATE TABLE IF NOT EXISTS credit_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    amount INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    description TEXT,
+    stripe_session_id TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_credit_transactions_user ON credit_transactions(user_id);
+`);
+
 export default db;

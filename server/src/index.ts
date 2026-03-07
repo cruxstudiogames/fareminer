@@ -12,6 +12,7 @@ import { authRouter } from './routes/auth.js';
 import { flightsRouter } from './routes/flights.js';
 import { cacheRouter } from './routes/cache.js';
 import { tripsRouter } from './routes/trips.js';
+import { creditsRouter, createWebhookHandler } from './routes/credits.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -24,6 +25,9 @@ if (!isProd) {
 if (isProd) {
   app.set('trust proxy', 1);
 }
+
+// Stripe webhook needs raw body - must be before express.json()
+app.use('/api/credits/webhook', express.raw({ type: 'application/json' }), createWebhookHandler());
 
 app.use(express.json());
 
@@ -52,6 +56,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/flights', requireAuth, flightsRouter);
 app.use('/api/cache', requireAuth, cacheRouter);
 app.use('/api/trips', requireAuth, tripsRouter);
+app.use('/api/credits', requireAuth, creditsRouter);
 
 // In production, serve the React client build
 if (isProd) {
