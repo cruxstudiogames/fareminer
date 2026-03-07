@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { OAuth2Client } from 'google-auth-library';
-import { findOrCreateUser, getUserById } from '../services/userService.js';
+import { findOrCreateUser, getUserById, updateUserPreferences, type User } from '../services/userService.js';
 
 export const authRouter = Router();
 
@@ -18,6 +18,20 @@ function isAccessAllowed(email: string): boolean {
   if (adminEmails.includes(email.toLowerCase())) return true;
 
   return process.env.ENABLE_PUBLIC_ACCESS?.toUpperCase() === 'TRUE';
+}
+
+function toUserResponse(user: User) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    picture: user.picture,
+    role: user.role,
+    isAdmin: user.is_admin === 1,
+    credits: user.role === 'owner' ? -1 : user.credits,
+    homePort: user.home_port || null,
+    defaultCurrency: user.default_currency || null,
+  };
 }
 
 authRouter.post('/google', async (req, res) => {
@@ -54,17 +68,7 @@ authRouter.post('/google', async (req, res) => {
 
     req.session.userId = user.id;
 
-    res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        picture: user.picture,
-        role: user.role,
-        isAdmin: user.is_admin === 1,
-        credits: user.role === 'owner' ? -1 : user.credits,
-      },
-    });
+    res.json({ user: toUserResponse(user) });
   } catch (err) {
     console.error('Google auth error:', err);
     res.status(401).json({ error: 'Authentication failed' });
@@ -84,17 +88,29 @@ authRouter.get('/me', (req, res) => {
     return;
   }
 
-  res.json({
-    user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      picture: user.picture,
-      role: user.role,
-      isAdmin: user.is_admin === 1,
-      credits: user.role === 'owner' ? -1 : user.credits,
-    },
+  res.json({ user: toUserResponse(user) });
+});
+
+authRouter.patch('/preferences', (req, res) => {
+  if (!req.session.userId) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+
+  const { homePort, defaultCurrency } = req.body as { homePort?: string; defaultCurrency?: string };
+
+  updateUserPreferences(req.session.userId, {
+    home_port: homePort !== undefined ? (homePort || null) : undefined,
+    default_currency: defaultCurrency !== undefined ? (defaultCurrency || null) : undefined,
   });
+
+  const user = getUserById(req.session.userId);
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  res.json({ user: toUserResponse(user) });
 });
 
 authRouter.post('/logout', (req, res) => {

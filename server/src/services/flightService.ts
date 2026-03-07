@@ -144,7 +144,9 @@ async function searchFlights(params: FlightSearchParams): Promise<FlightSearchRe
   const from = params.origin.toUpperCase();
   const to = params.destination.toUpperCase();
   const currency = params.currency || 'USD';
-  const cabin = params.cabin || 'Economy';
+  // FlightAPI.io expects Premium_Economy (underscore), not "Premium Economy"
+  const cabinRaw = params.cabin || 'Economy';
+  const cabin = cabinRaw.replace(/\s+/g, '_');
 
   let url: string;
   if (params.returnDate) {
@@ -293,7 +295,7 @@ async function searchFlights(params: FlightSearchParams): Promise<FlightSearchRe
       totalPrice: price,
       pricePerPerson: price / params.adults,
       currency,
-      cabin,
+      cabin: cabinRaw,
     };
 
     // Return leg for round-trip

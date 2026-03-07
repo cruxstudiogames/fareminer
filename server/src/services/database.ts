@@ -53,6 +53,10 @@ try { db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
 // Migration: add admin_credits_month to track monthly credit grants for admins
 try { db.exec("ALTER TABLE users ADD COLUMN admin_credits_month TEXT"); } catch { /* already exists */ }
 
+// Migration: add user preferences (home port and default currency)
+try { db.exec("ALTER TABLE users ADD COLUMN home_port TEXT"); } catch { /* already exists */ }
+try { db.exec("ALTER TABLE users ADD COLUMN default_currency TEXT"); } catch { /* already exists */ }
+
 // Credit transactions ledger
 db.exec(`
   CREATE TABLE IF NOT EXISTS credit_transactions (

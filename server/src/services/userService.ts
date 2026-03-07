@@ -12,6 +12,8 @@ export interface User {
   role: UserRole;
   credits: number;
   admin_credits_month: string | null;
+  home_port: string | null;
+  default_currency: string | null;
   created_at: string;
   last_login: string;
 }
@@ -90,6 +92,8 @@ export function findOrCreateUser(googleId: string, email: string, name: string, 
     role,
     credits,
     admin_credits_month: role === 'admin' ? getCurrentMonth() : null,
+    home_port: null,
+    default_currency: null,
     created_at: now,
     last_login: now,
   };
@@ -97,4 +101,13 @@ export function findOrCreateUser(googleId: string, email: string, name: string, 
 
 export function getUserById(id: number): User | undefined {
   return db.prepare('SELECT * FROM users WHERE id = ?').get(id) as User | undefined;
+}
+
+export function updateUserPreferences(id: number, prefs: { home_port?: string | null; default_currency?: string | null }): void {
+  if (prefs.home_port !== undefined) {
+    db.prepare('UPDATE users SET home_port = ? WHERE id = ?').run(prefs.home_port || null, id);
+  }
+  if (prefs.default_currency !== undefined) {
+    db.prepare('UPDATE users SET default_currency = ? WHERE id = ?').run(prefs.default_currency || null, id);
+  }
 }

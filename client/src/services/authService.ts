@@ -6,6 +6,8 @@ export interface AuthUser {
   role: 'owner' | 'admin' | 'user';
   isAdmin: boolean;
   credits: number;
+  homePort: string | null;
+  defaultCurrency: string | null;
 }
 
 export async function loginWithGoogle(credential: string): Promise<AuthUser> {
@@ -29,6 +31,18 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
   const response = await fetch('/api/auth/me', { credentials: 'include' });
   if (response.status === 401) return null;
   if (!response.ok) throw new Error('Failed to check auth status');
+  const data = (await response.json()) as { user: AuthUser };
+  return data.user;
+}
+
+export async function updatePreferences(prefs: { homePort?: string; defaultCurrency?: string }): Promise<AuthUser> {
+  const response = await fetch('/api/auth/preferences', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(prefs),
+  });
+  if (!response.ok) throw new Error('Failed to update preferences');
   const data = (await response.json()) as { user: AuthUser };
   return data.user;
 }

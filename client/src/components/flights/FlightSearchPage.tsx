@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useRef, useEffect, useState } from 'react';
-import { Search, Loader2, Table2, Map as MapIcon, Grid3x3, AlertTriangle, BarChart3 } from 'lucide-react';
+import { Search, Loader2, Table2, Map as MapIcon, Grid3x3, AlertTriangle, BarChart3, List } from 'lucide-react';
 import { searchFlights, searchCachedFlights, generateDatesInRange, checkCachedCombos } from '../../services/flightService';
 import { FlightResultsTable } from './FlightResultsTable';
 import { FlightMap } from './FlightMap';
@@ -26,6 +26,21 @@ export function FlightSearchPage() {
 
   const isOwner = user?.role === 'owner';
 
+  // Apply user preferences as defaults (once on mount)
+  const prefsApplied = useRef(false);
+  useEffect(() => {
+    if (!user || prefsApplied.current) return;
+    prefsApplied.current = true;
+    const updates: Partial<typeof s> = {};
+    if (user.homePort && s.origins.length === 0) {
+      updates.origins = [user.homePort];
+    }
+    if (user.defaultCurrency) {
+      updates.currency = user.defaultCurrency;
+    }
+    if (Object.keys(updates).length > 0) set(updates);
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Build search combos
   const searchCombos = useMemo(() => {
     const dates = generateDatesInRange(s.dateBegin, s.dateEnd, s.daysOfWeek);
@@ -41,27 +56,30 @@ export function FlightSearchPage() {
     return combos;
   }, [s.origins, s.destinations, s.dateBegin, s.dateEnd, s.daysOfWeek, s.passengers, s.currency, s.cabin]);
 
-  // Check how many combos are cached
-  const [cacheStatus, setCacheStatus] = useState<{ cached: number; fresh: number } | null>(null);
+  // Check which combos are cached (per-combo boolean array)
+  const [comboCacheFlags, setComboCacheFlags] = useState<boolean[] | null>(null);
   useEffect(() => {
     if (searchCombos.length === 0) {
-      setCacheStatus(null);
+      setComboCacheFlags(null);
       return;
     }
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
         const results = await checkCachedCombos(searchCombos);
-        if (!cancelled) {
-          const cached = results.filter(Boolean).length;
-          setCacheStatus({ cached, fresh: searchCombos.length - cached });
-        }
+        if (!cancelled) setComboCacheFlags(results);
       } catch {
-        if (!cancelled) setCacheStatus(null);
+        if (!cancelled) setComboCacheFlags(null);
       }
     }, 300); // debounce
     return () => { cancelled = true; clearTimeout(timer); };
   }, [searchCombos]);
+
+  const cacheStatus = useMemo(() => {
+    if (!comboCacheFlags) return null;
+    const cached = comboCacheFlags.filter(Boolean).length;
+    return { cached, fresh: comboCacheFlags.length - cached };
+  }, [comboCacheFlags]);
 
   const searchCost = useMemo(() => {
     if (!s.liveSearch) return 0;
@@ -87,7 +105,7 @@ export function FlightSearchPage() {
     }
 
     abortRef.current = false;
-    set({ error: '', results: [], loading: true, searchProgress: null });
+    set({ error: '', results: [], loading: true, searchProgress: null, viewMode: 'table' });
 
     // Add airports to recent
     for (const code of s.origins) addRecent(code);
@@ -394,60 +412,78 @@ export function FlightSearchPage() {
           <p className="mx-3 sm:mx-6 mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">{s.error}</p>
         )}
 
-        {s.results.length > 0 && (
-          <>
-            {/* Filters bar */}
-            <FlightFilters
-              filters={s.filters}
-              onChange={(f) => set({ filters: f })}
-              carriers={carriers}
-              origins={uniqueOrigins}
-              destinations={uniqueDestinations}
-              waypoints={uniqueWaypoints}
-            />
+        {/* Filters bar - only when results exist and not on build view */}
+        {s.results.length > 0 && s.viewMode !== 'build' && (
+          <FlightFilters
+            filters={s.filters}
+            onChange={(f) => set({ filters: f })}
+            carriers={carriers}
+            origins={uniqueOrigins}
+            destinations={uniqueDestinations}
+            waypoints={uniqueWaypoints}
+          />
+        )}
 
-            {/* Result count + view toggle */}
-            <div className="flex items-center justify-between px-3 sm:px-6 py-2 bg-gray-50 border-b border-gray-200">
-              <div className="text-xs text-gray-500">
+        {/* View toggle - always visible */}
+        <div className="flex items-center justify-between px-3 sm:px-6 py-2 bg-gray-50 border-b border-gray-200">
+          <div className="text-xs text-gray-500">
+            {s.viewMode === 'build' ? (
+              <span>{searchCombos.length} quer{searchCombos.length !== 1 ? 'ies' : 'y'}</span>
+            ) : s.results.length > 0 ? (
+              <>
                 {filteredResults.length} result{filteredResults.length !== 1 ? 's' : ''}
                 {filteredResults.length !== s.results.length && (
                   <span className="text-gray-400 ml-1">({s.results.length} total)</span>
                 )}
-              </div>
-              <div className="flex items-center gap-1 bg-gray-200 rounded p-0.5">
-                <button
-                  onClick={() => set({ viewMode: 'table' })}
-                  className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'table' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  <Table2 className="w-3.5 h-3.5" />
-                  Table
-                </button>
-                <button
-                  onClick={() => set({ viewMode: 'time' })}
-                  className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'time' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  <BarChart3 className="w-3.5 h-3.5" />
-                  Chart
-                </button>
-                <button
-                  onClick={() => set({ viewMode: 'od' })}
-                  className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'od' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  <Grid3x3 className="w-3.5 h-3.5" />
-                  O&D
-                </button>
-                <button
-                  onClick={() => set({ viewMode: 'map' })}
-                  className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'map' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  <MapIcon className="w-3.5 h-3.5" />
-                  Map
-                </button>
-              </div>
-            </div>
+              </>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-1 bg-gray-200 rounded p-0.5">
+            <button
+              onClick={() => set({ viewMode: 'build' })}
+              className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'build' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <List className="w-3.5 h-3.5" />
+              Build
+            </button>
+            <button
+              onClick={() => set({ viewMode: 'table' })}
+              className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'table' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <Table2 className="w-3.5 h-3.5" />
+              Table
+            </button>
+            <button
+              onClick={() => set({ viewMode: 'time' })}
+              className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'time' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              Chart
+            </button>
+            <button
+              onClick={() => set({ viewMode: 'od' })}
+              className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'od' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <Grid3x3 className="w-3.5 h-3.5" />
+              O&D
+            </button>
+            <button
+              onClick={() => set({ viewMode: 'map' })}
+              className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'map' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <MapIcon className="w-3.5 h-3.5" />
+              Map
+            </button>
+          </div>
+        </div>
 
-            {/* Results view */}
-            <div className="flex-1 overflow-auto">
+        {/* Content area */}
+        <div className="flex-1 overflow-auto">
+          {s.viewMode === 'build' && (
+            <QueryBuildTable combos={searchCombos} cacheFlags={comboCacheFlags} />
+          )}
+          {s.viewMode !== 'build' && s.results.length > 0 && (
+            <>
               {s.viewMode === 'table' && (
                 <FlightResultsTable results={filteredResults} passengers={s.passengers} showCacheAge />
               )}
@@ -460,23 +496,86 @@ export function FlightSearchPage() {
               {s.viewMode === 'map' && (
                 <FlightMap results={filteredResults} />
               )}
+            </>
+          )}
+          {s.viewMode !== 'build' && s.loading && s.results.length === 0 && (
+            <div className="flex-1 flex items-center justify-center text-gray-400 text-sm h-full">
+              <Loader2 className="w-5 h-5 animate-spin mr-2" />
+              Searching...
             </div>
+          )}
+          {s.viewMode !== 'build' && !s.loading && s.results.length === 0 && !s.error && (
+            <div className="flex-1 flex items-center justify-center text-gray-400 text-sm p-4 text-center h-full">
+              Configure your search and click Search to see results
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QueryBuildTable({ combos, cacheFlags }: {
+  combos: { origin: string; destination: string; departureDate: string; adults: number; currency?: string; cabin?: string }[];
+  cacheFlags: boolean[] | null;
+}) {
+  if (combos.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-gray-400 text-sm p-4 h-full">
+        Add origins, destinations, and dates to see query plan
+      </div>
+    );
+  }
+
+  const cachedCount = cacheFlags ? cacheFlags.filter(Boolean).length : 0;
+  const freshCount = cacheFlags ? cacheFlags.length - cachedCount : combos.length;
+
+  return (
+    <div className="p-4">
+      <div className="mb-3 text-xs text-gray-500">
+        {combos.length} quer{combos.length !== 1 ? 'ies' : 'y'}:
+        {cacheFlags && (
+          <>
+            {' '}<span className="text-green-600 font-medium">{cachedCount} cached</span>,
+            {' '}<span className="text-amber-600 font-medium">{freshCount} new</span>
           </>
         )}
-
-        {s.loading && s.results.length === 0 && (
-          <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-            <Loader2 className="w-5 h-5 animate-spin mr-2" />
-            Searching...
-          </div>
-        )}
-
-        {!s.loading && s.results.length === 0 && !s.error && (
-          <div className="flex-1 flex items-center justify-center text-gray-400 text-sm p-4 text-center">
-            Configure your search and click Search to see results
-          </div>
-        )}
       </div>
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-gray-100 text-gray-600">
+            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">#</th>
+            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Origin</th>
+            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Destination</th>
+            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Date</th>
+            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Cabin</th>
+            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {combos.map((combo, i) => {
+            const isCached = cacheFlags?.[i] ?? false;
+            return (
+              <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                <td className="px-3 py-1.5 text-gray-400">{i + 1}</td>
+                <td className="px-3 py-1.5 font-mono">{combo.origin}</td>
+                <td className="px-3 py-1.5 font-mono">{combo.destination}</td>
+                <td className="px-3 py-1.5">{combo.departureDate}</td>
+                <td className="px-3 py-1.5">{combo.cabin || 'Economy'}</td>
+                <td className="px-3 py-1.5">
+                  {cacheFlags === null ? (
+                    <span className="text-gray-400">checking...</span>
+                  ) : isCached ? (
+                    <span className="text-green-600 font-medium">cached</span>
+                  ) : (
+                    <span className="text-amber-600 font-medium">new</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { Plane, LogOut, Coins } from 'lucide-react';
+import { Plane, LogOut, Coins, Settings } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
-import { logout } from '../../services/authService';
+import { logout, updatePreferences } from '../../services/authService';
 import { purchaseCredits } from '../../services/creditService';
+import { AirportInput } from '../flights/AirportInput';
 
 export function Header() {
   const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
   const [purchasing, setPurchasing] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const handleLogout = async () => {
     await logout();
@@ -22,6 +25,15 @@ export function Header() {
     } catch {
       alert('Failed to start purchase. Please try again.');
       setPurchasing(false);
+    }
+  };
+
+  const handleSavePreference = async (key: 'homePort' | 'defaultCurrency', value: string) => {
+    try {
+      const updated = await updatePreferences({ [key]: value });
+      setUser(updated);
+    } catch {
+      // silently fail
     }
   };
 
@@ -67,6 +79,13 @@ export function Header() {
               </span>
             )}
             <button
+              onClick={() => setSettingsOpen(!settingsOpen)}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 px-1.5 py-1 rounded hover:bg-gray-50"
+              title="Settings"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+            <button
               onClick={handleLogout}
               className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-600 px-1.5 py-1 rounded hover:bg-gray-50"
               title="Sign out"
@@ -76,6 +95,66 @@ export function Header() {
           </div>
         )}
       </div>
+
+      {/* User Settings Panel */}
+      {settingsOpen && user && (
+        <UserSettingsPanel
+          homePort={user.homePort || ''}
+          defaultCurrency={user.defaultCurrency || ''}
+          onSave={handleSavePreference}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </header>
+  );
+}
+
+function UserSettingsPanel({ homePort, defaultCurrency, onSave, onClose }: {
+  homePort: string;
+  defaultCurrency: string;
+  onSave: (key: 'homePort' | 'defaultCurrency', value: string) => void;
+  onClose: () => void;
+}) {
+  const [port, setPort] = useState(homePort);
+  const [currency, setCurrency] = useState(defaultCurrency);
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="absolute right-3 top-12 z-50 bg-white rounded-lg shadow-lg border border-gray-200 p-4 w-72">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">User Settings</h3>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Home Airport</label>
+            <AirportInput
+              value={port}
+              onChange={(code) => {
+                setPort(code);
+                if (code.length === 3 || code === '') onSave('homePort', code);
+              }}
+              placeholder="e.g. SYD"
+            />
+            <p className="text-[10px] text-gray-400 mt-0.5">Default departure airport for searches</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Default Currency</label>
+            <input
+              value={currency}
+              onChange={(e) => {
+                const val = e.target.value.toUpperCase();
+                setCurrency(val);
+                if (val.length === 3 || val === '') onSave('defaultCurrency', val);
+              }}
+              placeholder="e.g. AUD"
+              maxLength={3}
+              className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm uppercase placeholder:normal-case focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+            <p className="text-[10px] text-gray-400 mt-0.5">Default currency for price display</p>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }

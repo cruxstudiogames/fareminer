@@ -63,7 +63,7 @@ const REGION_CURRENCY: Record<string, string> = {
   TW: 'TWD', ID: 'IDR', VN: 'VND',
 };
 
-export type ResultViewMode = 'table' | 'time' | 'od' | 'map';
+export type ResultViewMode = 'build' | 'table' | 'time' | 'od' | 'map';
 
 export interface SearchState {
   // Search query fields
@@ -108,7 +108,7 @@ export const useFlightSearchStore = create<FlightSearchStore>((set) => ({
     loading: false,
     searchProgress: null,
     filters: { ...defaultFilterState, selectedCarriers: new Set(), selectedCabins: new Set() },
-    viewMode: 'table',
+    viewMode: 'build',
   },
   setSearch: (partial) =>
     set((s) => ({ search: { ...s.search, ...partial } })),
