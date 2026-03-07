@@ -76,9 +76,9 @@ export function PastQueriesPage() {
     setHasSearched(true);
     try {
       const results = await searchCachedFlights({
-        origin: origin || undefined,
-        destination: destination || undefined,
-        departureDate: departureDate || undefined,
+        origins: origin ? [origin] : undefined,
+        destinations: destination ? [destination] : undefined,
+        departureDates: departureDate ? [departureDate] : undefined,
       }, showAllUsers && isAdmin);
       setSearchResults(results);
     } catch (err) {

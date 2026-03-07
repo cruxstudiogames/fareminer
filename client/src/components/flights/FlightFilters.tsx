@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import type { FlightSearchResult, FlightSegment } from '../../types';
 import { parseDuration } from '../../utils/flightUtils';
 

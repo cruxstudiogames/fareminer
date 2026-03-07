@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { FlightSearchResult, ScatterSearchRouteResult, TimeSweepDayResult, TimeSweepCombo } from '../types';
+import type { FlightSearchResult } from '../types';
 import { defaultFilterState, type FlightFilterState } from '../components/flights/FlightFilters';
 
 function addDays(days: number): string {

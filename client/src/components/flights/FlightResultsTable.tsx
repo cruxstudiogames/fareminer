@@ -97,7 +97,7 @@ interface FlightResultsTableProps {
   showCacheAge?: boolean;
 }
 
-export function FlightResultsTable({ results, passengers, showCacheAge }: FlightResultsTableProps) {
+export function FlightResultsTable({ results, passengers: _passengers, showCacheAge }: FlightResultsTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('totalPrice');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [selectedFlight, setSelectedFlight] = useState<FlightSearchResult | null>(null);

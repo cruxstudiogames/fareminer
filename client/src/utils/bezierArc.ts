@@ -54,7 +54,6 @@ export function computeBezierArcSegments(
   if (dLng < -180) dLng += 360;
   const effectiveLng2 = lng1 + dLng;
 
-  const midLat = (lat1 + effectiveLng2 + lat2 - effectiveLng2) / 2;
   const midLng = (lng1 + effectiveLng2) / 2;
   const dLatC = lat2 - lat1;
   const dLngC = effectiveLng2 - lng1;
