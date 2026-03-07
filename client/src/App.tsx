@@ -5,6 +5,7 @@ import { FlightSearchPage } from './components/flights/FlightSearchPage';
 import { LoginPage } from './components/auth/LoginPage';
 import { useAuthStore } from './store/useAuthStore';
 import { fetchCurrentUser } from './services/authService';
+import { verifyPurchase } from './services/creditService';
 import { Loader2 } from 'lucide-react';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -22,10 +23,14 @@ export default function App() {
   // Handle return from Stripe checkout
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('credits') === 'success') {
-      // Refresh user to get updated credits
-      fetchCurrentUser().then((user) => {
-        if (user) setUser(user);
+    const sessionId = params.get('session_id');
+    if (params.get('credits') === 'success' && sessionId) {
+      // Verify payment and grant credits
+      verifyPurchase(sessionId).then((credits) => {
+        useAuthStore.getState().setCredits(credits);
+      }).catch(() => {
+        // Fallback: refresh user data
+        fetchCurrentUser().then((user) => { if (user) setUser(user); });
       });
       window.history.replaceState({}, '', window.location.pathname);
     } else if (params.get('credits') === 'cancel') {

@@ -45,7 +45,7 @@ creditsRouter.post('/purchase', async (req, res) => {
         quantity: 1,
       }],
       mode: 'payment',
-      success_url: `${baseUrl}?credits=success`,
+      success_url: `${baseUrl}?credits=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${baseUrl}?credits=cancel`,
       metadata: {
         userId: String(req.user!.id),
@@ -57,6 +57,45 @@ creditsRouter.post('/purchase', async (req, res) => {
   } catch (err) {
     console.error('Stripe checkout error:', err);
     res.status(500).json({ error: 'Failed to create checkout session' });
+  }
+});
+
+// Verify a completed checkout session and grant credits
+creditsRouter.post('/verify', async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      res.status(400).json({ error: 'Missing sessionId' });
+      return;
+    }
+
+    const stripe = getStripe();
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status !== 'paid') {
+      res.status(400).json({ error: 'Payment not completed' });
+      return;
+    }
+
+    const userId = Number(session.metadata?.userId);
+    if (userId !== req.user!.id) {
+      res.status(403).json({ error: 'Session does not belong to this user' });
+      return;
+    }
+
+    // Check if we already granted credits for this session (idempotent)
+    const history = getCreditHistory(userId) as Array<{ stripe_session_id: string | null }>;
+    const existing = history.find((t) => t.stripe_session_id === sessionId);
+    if (!existing) {
+      const credits = Number(session.metadata?.credits) || CREDITS_PER_PURCHASE;
+      addCredits(userId, credits, sessionId);
+      console.log(`Verified & added ${credits} credits to user ${userId} (session: ${sessionId})`);
+    }
+
+    res.json({ credits: getUserCredits(req.user!.id) });
+  } catch (err) {
+    console.error('Verify error:', err);
+    res.status(500).json({ error: 'Failed to verify payment' });
   }
 });
 

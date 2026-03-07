@@ -37,7 +37,7 @@ export function Header() {
 
         {user && (
           <div className="flex items-center gap-1 sm:gap-2">
-            {!user.isAdmin && (
+            {user.role === 'user' && (
               <div className="flex items-center gap-1 mr-1">
                 <Coins className="w-3.5 h-3.5 text-amber-500" />
                 <span className="text-xs font-medium text-gray-700">{user.credits}</span>
@@ -50,6 +50,12 @@ export function Header() {
                 </button>
               </div>
             )}
+            {user.role === 'admin' && (
+              <div className="flex items-center gap-1 mr-1">
+                <Coins className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-xs font-medium text-gray-700">{user.credits}</span>
+              </div>
+            )}
             {user.picture && (
               <img
                 src={user.picture}
@@ -59,6 +65,13 @@ export function Header() {
               />
             )}
             <span className="text-xs text-gray-600 max-w-24 truncate hidden md:inline">{user.name}</span>
+            {(user.role === 'owner' || user.role === 'admin') && (
+              <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
+                user.role === 'owner' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+              }`}>
+                {user.role}
+              </span>
+            )}
             <button
               onClick={handleLogout}
               className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-600 px-1.5 py-1 rounded hover:bg-gray-50"

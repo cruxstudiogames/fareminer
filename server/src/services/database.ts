@@ -45,6 +45,12 @@ try { db.exec('ALTER TABLE queries ADD COLUMN user_id INTEGER REFERENCES users(i
 // Migration: add credits column to users table
 try { db.exec('ALTER TABLE users ADD COLUMN credits INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
 
+// Migration: add role column to users table ('owner', 'admin', 'user')
+try { db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'"); } catch { /* already exists */ }
+
+// Migration: add admin_credits_month to track monthly credit grants for admins
+try { db.exec("ALTER TABLE users ADD COLUMN admin_credits_month TEXT"); } catch { /* already exists */ }
+
 // Credit transactions ledger
 db.exec(`
   CREATE TABLE IF NOT EXISTS credit_transactions (

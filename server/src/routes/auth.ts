@@ -10,6 +10,16 @@ function getGoogleClient() {
   return new OAuth2Client(clientId);
 }
 
+function isAccessAllowed(email: string): boolean {
+  const ownerEmails = (process.env.OWNER_ACCOUNT || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+  if (ownerEmails.includes(email.toLowerCase())) return true;
+
+  const adminEmails = (process.env.ADMIN_ACCOUNT || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+  if (adminEmails.includes(email.toLowerCase())) return true;
+
+  return process.env.ENABLE_PUBLIC_ACCESS?.toUpperCase() === 'TRUE';
+}
+
 authRouter.post('/google', async (req, res) => {
   try {
     const { credential } = req.body;
@@ -30,14 +40,9 @@ authRouter.post('/google', async (req, res) => {
       return;
     }
 
-    // Optional allowlist: set ALLOWED_EMAILS="a@gmail.com,b@gmail.com" to restrict access
-    const allowedEmails = process.env.ALLOWED_EMAILS;
-    if (allowedEmails) {
-      const allowed = allowedEmails.split(',').map(e => e.trim().toLowerCase());
-      if (!allowed.includes(payload.email.toLowerCase())) {
-        res.status(403).json({ error: 'Access denied. Your account is not on the allowlist.' });
-        return;
-      }
+    if (!isAccessAllowed(payload.email)) {
+      res.status(403).json({ error: 'Access denied. Public registration is currently disabled.' });
+      return;
     }
 
     const user = findOrCreateUser(
@@ -55,8 +60,9 @@ authRouter.post('/google', async (req, res) => {
         email: user.email,
         name: user.name,
         picture: user.picture,
+        role: user.role,
         isAdmin: user.is_admin === 1,
-        credits: user.credits,
+        credits: user.role === 'owner' ? -1 : user.credits,
       },
     });
   } catch (err) {
@@ -84,7 +90,9 @@ authRouter.get('/me', (req, res) => {
       email: user.email,
       name: user.name,
       picture: user.picture,
+      role: user.role,
       isAdmin: user.is_admin === 1,
+      credits: user.role === 'owner' ? -1 : user.credits,
     },
   });
 });

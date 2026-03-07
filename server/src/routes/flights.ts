@@ -33,10 +33,11 @@ flightsRouter.get('/search', async (req, res) => {
     };
 
     const isFresh = fresh === 'true';
-    const isAdmin = req.user?.is_admin === 1;
+    const userRole = req.user?.role;
+    const isOwner = userRole === 'owner';
 
-    // Check if this will be a fresh API call (not cached)
-    if (!isAdmin) {
+    // Owner has unlimited credits; admins and users deduct from their balance
+    if (!isOwner) {
       const cached = getCachedResults(searchParams);
       if (!cached || isFresh) {
         // This will cost a credit - check balance first
@@ -63,7 +64,7 @@ flightsRouter.get('/search', async (req, res) => {
 
     res.json({
       results,
-      credits: isAdmin ? undefined : getUserCredits(req.user!.id),
+      credits: userRole === 'owner' ? undefined : getUserCredits(req.user!.id),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

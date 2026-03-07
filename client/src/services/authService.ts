@@ -3,6 +3,7 @@ export interface AuthUser {
   email: string;
   name: string;
   picture: string | null;
+  role: 'owner' | 'admin' | 'user';
   isAdmin: boolean;
   credits: number;
 }

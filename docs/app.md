@@ -7,14 +7,19 @@
 - It is very important that code / ui changes does not invalidate or delete cached results
 - UI responsiveness and ease of use is utmost important
 
+## Access control
+
+- Owner (OWNER_ACCOUNT env var): can always log in, unlimited searches, no credit deductions
+- Admin (ADMIN_ACCOUNT env var): can always log in, 10,000 search credits granted per month (auto-refreshed on login)
+- Public users: can only log in when ENABLE_PUBLIC_ACCESS=TRUE, otherwise denied
+- Users can become admins if they contribute to the git repo and email is white listed (owner is decider of contribution worthiness)
+
 ## Credit system
 
-- Users can log in for free through google
-- Users can browse cached data from the last 24 hours
-- Users can be $5 USD for 1000 search credits to search for custom routes
-- Admin users have 10,000 search credits per month
-- Users can become admins if they contribute to the git repo and email is white listed (owner is decider of contribution worthiness)
-- Owner user has unlimited searches
+- Public users can browse cached data from the last 24 hours
+- Public users pay $5 USD for 1000 search credits to search for custom routes
+- Admin users have 10,000 search credits per month (auto-granted on login each month)
+- Owner user has unlimited searches (no credit tracking)
 
 ## UI Layout
 

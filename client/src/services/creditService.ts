@@ -15,3 +15,15 @@ export async function purchaseCredits(): Promise<string> {
   const data = (await response.json()) as { url: string };
   return data.url;
 }
+
+export async function verifyPurchase(sessionId: string): Promise<number> {
+  const response = await fetch('/api/credits/verify', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId }),
+  });
+  if (!response.ok) throw new Error('Failed to verify purchase');
+  const data = (await response.json()) as { credits: number };
+  return data.credits;
+}
