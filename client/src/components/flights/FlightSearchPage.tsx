@@ -1,304 +1,482 @@
-import { useMemo, useState } from 'react';
-import { Search, Loader2, BarChart3, Grid3x3, Table2, Map as MapIcon, History } from 'lucide-react';
-import { searchFlights } from '../../services/flightService';
+import { useMemo, useCallback, useRef, useEffect, useState } from 'react';
+import { Search, Loader2, Table2, Map as MapIcon, Grid3x3, AlertTriangle, BarChart3 } from 'lucide-react';
+import { searchFlights, searchCachedFlights, generateDatesInRange, checkCachedCombos } from '../../services/flightService';
 import { FlightResultsTable } from './FlightResultsTable';
 import { FlightMap } from './FlightMap';
-import { FlightFilters, applyFlightFilters, extractCarriers } from './FlightFilters';
-import { TimeSweepPanel } from './TimeSweepPanel';
-import { ScatterSearchPanel } from './ScatterSearchPanel';
-import { PastQueriesPanel } from './PastQueriesPanel';
+import { ODMatrix } from './ODMatrix';
+import { TimeView } from './TimeView';
+import { FlightFilters, applyFlightFilters, extractCarriers, extractUniqueValues } from './FlightFilters';
 import { useFlightSearchStore } from '../../store/useFlightSearchStore';
-import { AirportInput, useRecentAirports } from './AirportInput';
-import { create } from 'zustand';
+import { useAuthStore } from '../../store/useAuthStore';
+import { MultiAirportInput } from './MultiAirportInput';
+import { useRecentAirports } from './AirportInput';
+import type { FlightSearchResult } from '../../types';
 
-type SearchMode = 'specific' | 'timesweep' | 'scatter' | 'past';
-
-const useSearchMode = create<{ mode: SearchMode; setMode: (m: SearchMode) => void }>((set) => ({
-  mode: 'specific',
-  setMode: (mode) => set({ mode }),
-}));
+// MTWTFSS order: display index -> JS day number (0=Sun)
+const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const DAY_JS_VALUES = [1, 2, 3, 4, 5, 6, 0]; // Mon=1..Sat=6, Sun=0
+const CABIN_OPTIONS = ['Economy', 'Premium Economy', 'Business', 'First'];
 
 export function FlightSearchPage() {
-  const { mode: searchMode, setMode: setSearchMode } = useSearchMode();
-
-  return (
-    <div className="flex-1 flex flex-col overflow-auto">
-      {/* Sub-tab navigation */}
-      <div className="bg-white border-b border-gray-200 px-3 sm:px-6 py-2 flex items-center gap-1 sm:gap-2 overflow-x-auto">
-        <button
-          onClick={() => setSearchMode('specific')}
-          className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md transition-colors ${
-            searchMode === 'specific'
-              ? 'bg-blue-50 text-blue-700 font-medium'
-              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-          }`}
-        >
-          <Search className="w-3.5 h-3.5" />
-          Route Search
-        </button>
-        <button
-          onClick={() => setSearchMode('timesweep')}
-          className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md transition-colors ${
-            searchMode === 'timesweep'
-              ? 'bg-blue-50 text-blue-700 font-medium'
-              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-          }`}
-        >
-          <BarChart3 className="w-3.5 h-3.5" />
-          Time Sweep
-        </button>
-        <button
-          onClick={() => setSearchMode('scatter')}
-          className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md transition-colors ${
-            searchMode === 'scatter'
-              ? 'bg-blue-50 text-blue-700 font-medium'
-              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-          }`}
-        >
-          <Grid3x3 className="w-3.5 h-3.5" />
-          Scatter Search
-        </button>
-        <button
-          onClick={() => setSearchMode('past')}
-          className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md transition-colors ${
-            searchMode === 'past'
-              ? 'bg-blue-50 text-blue-700 font-medium'
-              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-          }`}
-        >
-          <History className="w-3.5 h-3.5" />
-          Past Queries
-        </button>
-      </div>
-
-      {searchMode === 'specific' && <SpecificSearchPanel />}
-      {searchMode === 'timesweep' && <TimeSweepPanel />}
-      {searchMode === 'scatter' && <ScatterSearchPanel />}
-      {searchMode === 'past' && <PastQueriesPanel />}
-    </div>
-  );
-}
-
-type RouteViewMode = 'table' | 'map';
-
-function SpecificSearchPanel() {
-  const s = useFlightSearchStore((st) => st.specific);
-  const set = useFlightSearchStore((st) => st.setSpecific);
+  const s = useFlightSearchStore((st) => st.search);
+  const set = useFlightSearchStore((st) => st.setSearch);
   const addRecent = useRecentAirports((st) => st.addRecent);
-  const [viewMode, setViewMode] = useState<RouteViewMode>('table');
+  const user = useAuthStore((st) => st.user);
+  const abortRef = useRef(false);
 
-  const hasReturn = s.tripType === 'roundtrip';
+  const isOwner = user?.role === 'owner';
 
-  const outFiltered = useMemo(
-    () => applyFlightFilters(s.results, s.outboundFilters, 'outbound'),
-    [s.results, s.outboundFilters],
-  );
-
-  const displayResults = useMemo(
-    () => hasReturn ? applyFlightFilters(outFiltered, s.returnFilters, 'return') : outFiltered,
-    [outFiltered, s.returnFilters, hasReturn],
-  );
-
-  const outboundCarriers = useMemo(() => extractCarriers(s.results, 'outbound'), [s.results]);
-  const returnCarriers = useMemo(() => hasReturn ? extractCarriers(s.results, 'return') : [], [s.results, hasReturn]);
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    set({ error: '', results: [], loading: true });
-    addRecent(s.origin.toUpperCase());
-    addRecent(s.destination.toUpperCase());
-    try {
-      const data = await searchFlights({
-        origin: s.origin.toUpperCase(),
-        destination: s.destination.toUpperCase(),
-        departureDate: s.date,
-        adults: s.adults,
-        currency: s.currency,
-        returnDate: hasReturn ? s.returnDate : undefined,
-      });
-      set({ results: data, loading: false });
-      if (data.length === 0) set({ error: 'No flights found for this route/date.' });
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'Search failed', loading: false });
+  // Build search combos
+  const searchCombos = useMemo(() => {
+    const dates = generateDatesInRange(s.dateBegin, s.dateEnd, s.daysOfWeek);
+    const combos: { origin: string; destination: string; departureDate: string; adults: number; currency?: string; cabin?: string }[] = [];
+    for (const origin of s.origins) {
+      for (const destination of s.destinations) {
+        if (origin === destination) continue;
+        for (const date of dates) {
+          combos.push({ origin, destination, departureDate: date, adults: s.passengers, currency: s.currency, cabin: s.cabin });
+        }
+      }
     }
-  };
+    return combos;
+  }, [s.origins, s.destinations, s.dateBegin, s.dateEnd, s.daysOfWeek, s.passengers, s.currency, s.cabin]);
+
+  // Check how many combos are cached
+  const [cacheStatus, setCacheStatus] = useState<{ cached: number; fresh: number } | null>(null);
+  useEffect(() => {
+    if (searchCombos.length === 0) {
+      setCacheStatus(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const results = await checkCachedCombos(searchCombos);
+        if (!cancelled) {
+          const cached = results.filter(Boolean).length;
+          setCacheStatus({ cached, fresh: searchCombos.length - cached });
+        }
+      } catch {
+        if (!cancelled) setCacheStatus(null);
+      }
+    }, 300); // debounce
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [searchCombos]);
+
+  const searchCost = useMemo(() => {
+    if (!s.liveSearch) return 0;
+    return cacheStatus?.fresh ?? searchCombos.length;
+  }, [s.liveSearch, cacheStatus, searchCombos.length]);
+
+  // Apply filters to results
+  const filteredResults = useMemo(
+    () => applyFlightFilters(s.results, s.filters),
+    [s.results, s.filters],
+  );
+
+  const carriers = useMemo(() => extractCarriers(s.results), [s.results]);
+  const uniqueOrigins = useMemo(() => extractUniqueValues(s.results, 'origin'), [s.results]);
+  const uniqueDestinations = useMemo(() => extractUniqueValues(s.results, 'destination'), [s.results]);
+  const uniqueWaypoints = useMemo(() => extractUniqueValues(s.results, 'waypoints'), [s.results]);
+
+  const handleSearch = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (s.origins.length === 0 || s.destinations.length === 0) {
+      set({ error: 'Please select at least one origin and one destination.' });
+      return;
+    }
+
+    abortRef.current = false;
+    set({ error: '', results: [], loading: true, searchProgress: null });
+
+    // Add airports to recent
+    for (const code of s.origins) addRecent(code);
+    for (const code of s.destinations) addRecent(code);
+
+    try {
+      if (!s.liveSearch) {
+        // Cache search
+        const dates = generateDatesInRange(s.dateBegin, s.dateEnd, s.daysOfWeek);
+        const results = await searchCachedFlights({
+          origins: s.origins,
+          destinations: s.destinations,
+          departureDates: dates,
+          cabin: s.cabin,
+        });
+        set({
+          results: results as FlightSearchResult[],
+          loading: false,
+          searchProgress: null,
+        });
+        if (results.length === 0) set({ error: 'No cached results found. Try a live search.' });
+      } else {
+        // Live search: iterate over all O/D/date combinations
+        const dates = generateDatesInRange(s.dateBegin, s.dateEnd, s.daysOfWeek);
+        const combos: { origin: string; destination: string; date: string }[] = [];
+        for (const origin of s.origins) {
+          for (const destination of s.destinations) {
+            if (origin === destination) continue;
+            for (const date of dates) {
+              combos.push({ origin, destination, date });
+            }
+          }
+        }
+
+        if (combos.length === 0) {
+          set({ error: 'No valid search combinations. Check your origins, destinations, and dates.', loading: false });
+          return;
+        }
+
+        set({ searchProgress: { completed: 0, total: combos.length } });
+        const allResults: FlightSearchResult[] = [];
+        let completed = 0;
+
+        for (const combo of combos) {
+          if (abortRef.current) {
+            set({ error: `Search cancelled. ${allResults.length} results collected.`, loading: false, searchProgress: null });
+            return;
+          }
+          try {
+            const results = await searchFlights({
+              origin: combo.origin,
+              destination: combo.destination,
+              departureDate: combo.date,
+              adults: s.passengers,
+              currency: s.currency,
+              cabin: s.cabin,
+            });
+            allResults.push(...results);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Search failed';
+            if (msg.includes('INSUFFICIENT_CREDITS') || msg.includes('Insufficient credits')) {
+              set({
+                results: allResults,
+                error: `Ran out of credits after ${completed} searches. ${allResults.length} results collected.`,
+                loading: false,
+                searchProgress: null,
+              });
+              return;
+            }
+            // Continue on individual search errors
+            console.warn(`Search failed for ${combo.origin}-${combo.destination} ${combo.date}:`, msg);
+          }
+          completed++;
+          set({ results: [...allResults], searchProgress: { completed, total: combos.length } });
+        }
+
+        set({ results: allResults, loading: false, searchProgress: null });
+        if (allResults.length === 0) set({ error: 'No flights found.' });
+      }
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'Search failed', loading: false, searchProgress: null });
+    }
+  }, [s.origins, s.destinations, s.dateBegin, s.dateEnd, s.daysOfWeek, s.passengers, s.currency, s.cabin, s.liveSearch, set, addRecent]);
+
+  const handleCancel = useCallback(() => {
+    abortRef.current = true;
+  }, []);
+
+  const toggleDayOfWeek = useCallback((jsDay: number) => {
+    set({
+      daysOfWeek: s.daysOfWeek.includes(jsDay)
+        ? s.daysOfWeek.filter((d) => d !== jsDay)
+        : [...s.daysOfWeek, jsDay],
+    });
+  }, [s.daysOfWeek, set]);
+
+  const handleODCellClick = useCallback((origin: string, destination: string) => {
+    set({
+      filters: {
+        ...s.filters,
+        selectedOrigins: new Set([origin]),
+        selectedDestinations: new Set([destination]),
+      },
+      viewMode: 'table',
+    });
+  }, [s.filters, set]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-auto">
-      <div className="bg-white border-b border-gray-200 px-3 sm:px-6 py-4">
-        <form onSubmit={handleSearch} className="flex items-end gap-2 sm:gap-3 flex-wrap">
-          <div className="flex rounded-md overflow-auto border border-gray-300 text-sm">
-            <button
-              type="button"
-              onClick={() => set({ tripType: 'oneway' })}
-              className={`px-3 py-1.5 font-medium transition-colors ${
-                s.tripType === 'oneway'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              One-way
-            </button>
-            <button
-              type="button"
-              onClick={() => set({ tripType: 'roundtrip' })}
-              className={`px-3 py-1.5 font-medium transition-colors ${
-                s.tripType === 'roundtrip'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              Round-trip
-            </button>
-          </div>
+    <div className="flex-1 flex overflow-hidden">
+      {/* Left panel - Search Query */}
+      <div className="w-72 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col overflow-auto">
+        <div className="px-4 py-3 border-b border-gray-200">
+          <h2 className="text-sm font-semibold text-gray-700">Search</h2>
+        </div>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
-            <AirportInput
-              value={s.origin}
-              onChange={(v) => set({ origin: v })}
-              placeholder="JFK"
-              required
-              className="w-20 border border-gray-300 rounded-md px-2 py-1.5 text-sm uppercase placeholder:normal-case focus:outline-none focus:ring-1 focus:ring-blue-400"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
-            <AirportInput
-              value={s.destination}
-              onChange={(v) => set({ destination: v })}
-              placeholder="NRT"
-              required
-              className="w-20 border border-gray-300 rounded-md px-2 py-1.5 text-sm uppercase placeholder:normal-case focus:outline-none focus:ring-1 focus:ring-blue-400"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Departure</label>
-            <input
-              type="date"
-              value={s.date}
-              onChange={(e) => set({ date: e.target.value })}
-              required
-              className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-            />
-          </div>
-
-          {hasReturn && (
+        <form onSubmit={handleSearch} className="flex-1 overflow-auto">
+          <div className="p-4 space-y-4">
+            {/* Origins */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Return</label>
-              <input
-                type="date"
-                value={s.returnDate}
-                onChange={(e) => set({ returnDate: e.target.value })}
-                min={s.date}
-                required
-                className="border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              <label className="block text-xs font-medium text-gray-600 mb-1">Departure Airports</label>
+              <MultiAirportInput
+                codes={s.origins}
+                onChange={(codes) => set({ origins: codes })}
+                placeholder="Add airports..."
+                color="blue"
               />
             </div>
-          )}
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Passengers</label>
-            <input
-              type="number"
-              value={s.adults}
-              onChange={(e) => set({ adults: Math.max(1, parseInt(e.target.value) || 1) })}
-              min={1}
-              max={9}
-              className="w-16 border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-            />
+            {/* Destinations */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Arrival Airports</label>
+              <MultiAirportInput
+                codes={s.destinations}
+                onChange={(codes) => set({ destinations: codes })}
+                placeholder="Add airports..."
+                color="green"
+              />
+            </div>
+
+            {/* Date Range */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Date Begin</label>
+                <input
+                  type="date"
+                  value={s.dateBegin}
+                  onChange={(e) => set({ dateBegin: e.target.value })}
+                  required
+                  className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Date End</label>
+                <input
+                  type="date"
+                  value={s.dateEnd}
+                  onChange={(e) => set({ dateEnd: e.target.value })}
+                  min={s.dateBegin}
+                  required
+                  className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+              </div>
+            </div>
+
+            {/* Day of Week */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Days of Week</label>
+              <div className="flex gap-1">
+                {DAY_LABELS.map((label, i) => {
+                  const jsDay = DAY_JS_VALUES[i];
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => toggleDayOfWeek(jsDay)}
+                      className={`w-8 h-7 rounded text-xs font-medium transition-colors ${
+                        s.daysOfWeek.length === 0 || s.daysOfWeek.includes(jsDay)
+                          ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                          : 'bg-gray-100 text-gray-400 border border-gray-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-gray-400 mt-0.5">
+                {s.daysOfWeek.length === 0 ? 'All days' : `${s.daysOfWeek.length} selected`}
+              </p>
+            </div>
+
+            {/* Passengers */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Passengers</label>
+                <input
+                  type="number"
+                  value={s.passengers}
+                  onChange={(e) => set({ passengers: Math.max(1, parseInt(e.target.value) || 1) })}
+                  min={1}
+                  max={9}
+                  className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Currency</label>
+                <input
+                  value={s.currency}
+                  onChange={(e) => set({ currency: e.target.value.toUpperCase() })}
+                  placeholder="USD"
+                  maxLength={3}
+                  className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm uppercase placeholder:normal-case focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+              </div>
+            </div>
+
+            {/* Cabin */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cabin</label>
+              <select
+                value={s.cabin}
+                onChange={(e) => set({ cabin: e.target.value })}
+                className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              >
+                {CABIN_OPTIONS.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Live Search Toggle */}
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <span className="font-medium">Live Search</span>
+                <input
+                  type="checkbox"
+                  checked={s.liveSearch}
+                  onChange={(e) => set({ liveSearch: e.target.checked })}
+                  className="rounded border-gray-300"
+                />
+              </label>
+            </div>
+
+            {/* Cache status & credit warning */}
+            {cacheStatus && searchCombos.length > 0 && (
+              <div className="p-2 bg-gray-100 border border-gray-200 rounded-md text-xs text-gray-600 space-y-1">
+                <div>{searchCombos.length} queries: <span className="text-green-600 font-medium">{cacheStatus.cached} cached</span>, <span className="text-amber-600 font-medium">{cacheStatus.fresh} new</span></div>
+                {s.liveSearch && cacheStatus.fresh > 0 && !isOwner && (
+                  <div className="flex items-center gap-1 text-amber-700">
+                    <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                    <span>Will use <strong>{cacheStatus.fresh}</strong> credit{cacheStatus.fresh !== 1 ? 's' : ''}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Currency</label>
-            <input
-              value={s.currency}
-              onChange={(e) => set({ currency: e.target.value.toUpperCase() })}
-              placeholder="AUD"
-              maxLength={3}
-              className="w-16 border border-gray-300 rounded-md px-2 py-1.5 text-sm uppercase placeholder:normal-case focus:outline-none focus:ring-1 focus:ring-blue-400"
-            />
+          {/* Search Button */}
+          <div className="p-4 border-t border-gray-200 bg-gray-50 sticky bottom-0">
+            {s.loading ? (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="w-full bg-red-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-red-700 flex items-center justify-center gap-2"
+                >
+                  Cancel
+                </button>
+                {s.searchProgress && (
+                  <div>
+                    <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                      <span>{s.searchProgress.completed}/{s.searchProgress.total}</span>
+                      <span>{Math.round((s.searchProgress.completed / s.searchProgress.total) * 100)}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all"
+                        style={{ width: `${(s.searchProgress.completed / s.searchProgress.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                type="submit"
+                disabled={s.origins.length === 0 || s.destinations.length === 0}
+                className="w-full bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Search className="w-4 h-4" />
+                Search
+                {s.liveSearch && !isOwner && searchCost > 0 && (
+                  <span className="text-blue-200 text-xs">({searchCost} credits)</span>
+                )}
+              </button>
+            )}
           </div>
-
-          <button
-            type="submit"
-            disabled={s.loading}
-            className="bg-blue-600 text-white px-4 py-1.5 rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-          >
-            {s.loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-            {s.loading ? 'Searching...' : 'Search'}
-          </button>
         </form>
-
-        {s.error && (
-          <p className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">{s.error}</p>
-        )}
       </div>
 
-      {s.results.length > 0 && (
-        <div className="flex-1 flex flex-col overflow-auto">
-          <div className="flex items-center">
-            <div className="flex-1">
-              <FlightFilters
-                label={hasReturn ? 'Outbound filters' : undefined}
-                filters={s.outboundFilters}
-                onChange={(f) => set({ outboundFilters: f })}
-                carriers={outboundCarriers}
-              />
-            </div>
-            <div className="pr-3 sm:pr-6 flex items-center gap-1 bg-gray-50 border-b border-gray-200 py-2">
+      {/* Right panel - Filters + Results */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {s.error && (
+          <p className="mx-3 sm:mx-6 mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">{s.error}</p>
+        )}
+
+        {s.results.length > 0 && (
+          <>
+            {/* Filters bar */}
+            <FlightFilters
+              filters={s.filters}
+              onChange={(f) => set({ filters: f })}
+              carriers={carriers}
+              origins={uniqueOrigins}
+              destinations={uniqueDestinations}
+              waypoints={uniqueWaypoints}
+            />
+
+            {/* Result count + view toggle */}
+            <div className="flex items-center justify-between px-3 sm:px-6 py-2 bg-gray-50 border-b border-gray-200">
+              <div className="text-xs text-gray-500">
+                {filteredResults.length} result{filteredResults.length !== 1 ? 's' : ''}
+                {filteredResults.length !== s.results.length && (
+                  <span className="text-gray-400 ml-1">({s.results.length} total)</span>
+                )}
+              </div>
               <div className="flex items-center gap-1 bg-gray-200 rounded p-0.5">
                 <button
-                  onClick={() => setViewMode('table')}
-                  className={`p-1 rounded text-xs flex items-center gap-1 ${viewMode === 'table' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  onClick={() => set({ viewMode: 'table' })}
+                  className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'table' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                 >
                   <Table2 className="w-3.5 h-3.5" />
                   Table
                 </button>
                 <button
-                  onClick={() => setViewMode('map')}
-                  className={`p-1 rounded text-xs flex items-center gap-1 ${viewMode === 'map' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  onClick={() => set({ viewMode: 'time' })}
+                  className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'time' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  Chart
+                </button>
+                <button
+                  onClick={() => set({ viewMode: 'od' })}
+                  className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'od' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  <Grid3x3 className="w-3.5 h-3.5" />
+                  O&D
+                </button>
+                <button
+                  onClick={() => set({ viewMode: 'map' })}
+                  className={`p-1 rounded text-xs flex items-center gap-1 ${s.viewMode === 'map' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                 >
                   <MapIcon className="w-3.5 h-3.5" />
                   Map
                 </button>
               </div>
             </div>
+
+            {/* Results view */}
+            <div className="flex-1 overflow-auto">
+              {s.viewMode === 'table' && (
+                <FlightResultsTable results={filteredResults} passengers={s.passengers} showCacheAge />
+              )}
+              {s.viewMode === 'time' && (
+                <TimeView results={filteredResults} />
+              )}
+              {s.viewMode === 'od' && (
+                <ODMatrix results={filteredResults} onCellClick={handleODCellClick} />
+              )}
+              {s.viewMode === 'map' && (
+                <FlightMap results={filteredResults} />
+              )}
+            </div>
+          </>
+        )}
+
+        {s.loading && s.results.length === 0 && (
+          <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+            Searching...
           </div>
+        )}
 
-          {hasReturn && (
-            <FlightFilters
-              label="Return filters"
-              filters={s.returnFilters}
-              onChange={(f) => set({ returnFilters: f })}
-              carriers={returnCarriers}
-            />
-          )}
-
-          <div className="px-3 sm:px-6 py-2 text-xs text-gray-500 bg-gray-50 border-b border-gray-200">
-            {displayResults.length} result{displayResults.length !== 1 ? 's' : ''} found
-            {displayResults.length !== s.results.length && (
-              <span className="text-gray-400 ml-1">({s.results.length} total)</span>
-            )}
+        {!s.loading && s.results.length === 0 && !s.error && (
+          <div className="flex-1 flex items-center justify-center text-gray-400 text-sm p-4 text-center">
+            Configure your search and click Search to see results
           </div>
-
-          {viewMode === 'table' && (
-            <FlightResultsTable results={displayResults} passengers={s.adults} />
-          )}
-
-          {viewMode === 'map' && (
-            <FlightMap results={displayResults} />
-          )}
-        </div>
-      )}
-
-      {!s.loading && s.results.length === 0 && !s.error && (
-        <div className="flex-1 flex items-center justify-center text-gray-400 text-sm p-4 text-center">
-          Search for flights to see results here
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

@@ -1,7 +1,24 @@
 import { Router } from 'express';
-import { getAllQueries, getResultsByQueryId, searchCachedResults, getTimeSweepResults } from '../services/cacheService.js';
+import { getAllQueries, getResultsByQueryId, searchCachedResults, getTimeSweepResults, checkCachedKeys } from '../services/cacheService.js';
 
 export const cacheRouter = Router();
+
+// Check which O/D/date combos are cached
+cacheRouter.post('/check', (req, res) => {
+  try {
+    const { combos } = req.body as { combos: Array<{ origin: string; destination: string; departureDate: string; adults: number; currency?: string; cabin?: string }> };
+    if (!Array.isArray(combos)) {
+      res.status(400).json({ error: 'combos must be an array' });
+      return;
+    }
+    const results = checkCachedKeys(combos);
+    res.json({ cached: results });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.error('Cache check error:', message);
+    res.status(500).json({ error: message });
+  }
+});
 
 cacheRouter.get('/queries', (req, res) => {
   try {
@@ -25,11 +42,13 @@ cacheRouter.get('/search', (req, res) => {
     const tripType = (req.query.tripType as string | undefined) as 'any' | 'oneway' | 'roundtrip' | undefined;
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
 
+    const cabin = req.query.cabin as string | undefined;
+
     const wantsAll = req.query.all === 'true';
     const isAdmin = req.user?.is_admin === 1;
     const userId = (wantsAll && isAdmin) ? undefined : req.user!.id;
     const includeLegacy = wantsAll;
-    const results = searchCachedResults({ origins, destinations, departureDates, tripType, limit }, userId, includeLegacy);
+    const results = searchCachedResults({ origins, destinations, departureDates, tripType, limit, cabin }, userId, includeLegacy);
     res.json({ results });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

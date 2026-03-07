@@ -41,12 +41,10 @@ function formatDateShort(isoDate: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-/** Returns "+1", "+2" etc if arrival is on a later date than departure */
 function dayOffset(departure: string, arrival: string): string {
   if (!departure || !arrival) return '';
   const depDate = new Date(departure);
   const arrDate = new Date(arrival);
-  // Compare calendar dates (not timestamps)
   const depDay = new Date(depDate.getFullYear(), depDate.getMonth(), depDate.getDate());
   const arrDay = new Date(arrDate.getFullYear(), arrDate.getMonth(), arrDate.getDate());
   const diff = Math.round((arrDay.getTime() - depDay.getTime()) / (1000 * 60 * 60 * 24));
@@ -54,7 +52,6 @@ function dayOffset(departure: string, arrival: string): string {
   return '';
 }
 
-/** Get unique marketing carrier names from segments in order */
 function carrierNames(segments: FlightSegment[]): string {
   const seen = new Set<string>();
   const names: string[] = [];
@@ -67,7 +64,6 @@ function carrierNames(segments: FlightSegment[]): string {
   return names.join(', ');
 }
 
-/** Get unique operating carriers that differ from marketing carriers */
 function operatingCarrierNote(segments: FlightSegment[]): string {
   const seen = new Set<string>();
   const names: string[] = [];
@@ -80,7 +76,6 @@ function operatingCarrierNote(segments: FlightSegment[]): string {
   return names.length > 0 ? `op. by ${names.join(', ')}` : '';
 }
 
-/** Calculate total stopover time between segments */
 function stopoverDuration(segments: FlightSegment[]): number {
   let total = 0;
   for (let i = 0; i < segments.length - 1; i++) {
@@ -88,7 +83,7 @@ function stopoverDuration(segments: FlightSegment[]): number {
     const depTime = new Date(segments[i + 1].departureAt).getTime();
     total += Math.max(0, depTime - arrTime);
   }
-  return Math.round(total / (1000 * 60)); // minutes
+  return Math.round(total / (1000 * 60));
 }
 
 interface FlightResultsTableProps {
@@ -171,12 +166,6 @@ export function FlightResultsTable({ results, passengers: _passengers, showCache
                 </div>
                 <div className="text-right text-gray-400">{formatCurrency(r.pricePerPerson)}/pp</div>
               </div>
-              {r.returnDepartureAt && (
-                <div className="grid grid-cols-2 gap-x-3 text-xs text-gray-400 mt-1 pt-1 border-t border-gray-50">
-                  <div>Ret: {formatDateShort(r.returnDepartureAt)}</div>
-                  <div className="text-right">{r.returnDuration ? formatDuration(r.returnDuration) : ''}</div>
-                </div>
-              )}
             </div>
           );
         })}
@@ -213,16 +202,9 @@ export function FlightResultsTable({ results, passengers: _passengers, showCache
           <tbody className="bg-white divide-y divide-gray-200">
             {sorted.map((r) => {
               const arrOffset = dayOffset(r.departureAt, r.arrivalAt);
-              const retArrOffset = r.returnDepartureAt && r.returnArrivalAt
-                ? dayOffset(r.returnDepartureAt, r.returnArrivalAt)
-                : '';
               const outCarriers = r.segments?.length > 0 ? carrierNames(r.segments) : r.airlineName;
               const outOpNote = r.segments?.length > 0 ? operatingCarrierNote(r.segments) : '';
-              const retCarriers = r.returnSegments?.length ? carrierNames(r.returnSegments) : '';
-              const retOpNote = r.returnSegments?.length ? operatingCarrierNote(r.returnSegments) : '';
               const outStopover = r.segments?.length > 1 ? stopoverDuration(r.segments) : 0;
-              const retStopover = r.returnSegments && r.returnSegments.length > 1
-                ? stopoverDuration(r.returnSegments) : 0;
 
               return (
                 <tr
@@ -230,67 +212,30 @@ export function FlightResultsTable({ results, passengers: _passengers, showCache
                   className="hover:bg-blue-50/40 cursor-pointer align-top"
                   onClick={() => setSelectedFlight(r)}
                 >
-                  {/* Route */}
                   <td className="px-3 py-2.5 text-sm whitespace-nowrap">
                     <div className="font-medium">{r.origin} <ArrowRight className="w-3 h-3 inline text-gray-400" /> {r.destination}</div>
-                    {r.returnOrigin && (
-                      <div className="text-xs text-gray-400 mt-0.5">{r.returnOrigin} <ArrowRight className="w-3 h-3 inline text-gray-300" /> {r.returnDestination}</div>
-                    )}
                   </td>
-
-                  {/* Date */}
                   <td className="px-3 py-2.5 text-sm whitespace-nowrap">
                     <div>{formatDateShort(r.departureAt)}</div>
-                    {r.returnDepartureAt && (
-                      <div className="text-xs text-gray-400 mt-0.5">{formatDateShort(r.returnDepartureAt)}</div>
-                    )}
                   </td>
-
-                  {/* Dep time */}
                   <td className="px-3 py-2.5 text-sm whitespace-nowrap font-mono">
                     <div>{formatTime(r.departureAt)}</div>
-                    {r.returnDepartureAt && (
-                      <div className="text-xs text-gray-400 mt-0.5">{formatTime(r.returnDepartureAt)}</div>
-                    )}
                   </td>
-
-                  {/* Arr time with +N indicator */}
                   <td className="px-3 py-2.5 text-sm whitespace-nowrap font-mono">
                     <div>
                       {formatTime(r.arrivalAt)}
                       {arrOffset && <sup className="text-[10px] text-red-500 ml-0.5">{arrOffset}</sup>}
                     </div>
-                    {r.returnArrivalAt && (
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        {formatTime(r.returnArrivalAt)}
-                        {retArrOffset && <sup className="text-[10px] text-red-400 ml-0.5">{retArrOffset}</sup>}
-                      </div>
-                    )}
                   </td>
-
-                  {/* Carrier */}
                   <td className="px-3 py-2.5 text-sm max-w-[220px]">
                     <div className="truncate" title={outCarriers}>{outCarriers}</div>
                     {outOpNote && (
                       <div className="text-[11px] text-gray-400 mt-0.5 truncate italic" title={outOpNote}>{outOpNote}</div>
                     )}
-                    {retCarriers && (
-                      <div className="text-xs text-gray-400 mt-0.5 truncate" title={retCarriers}>{retCarriers}</div>
-                    )}
-                    {retOpNote && (
-                      <div className="text-[11px] text-gray-400 truncate italic" title={retOpNote}>{retOpNote}</div>
-                    )}
                   </td>
-
-                  {/* Duration */}
                   <td className="px-3 py-2.5 text-sm whitespace-nowrap">
                     <div>{formatDuration(r.duration)}</div>
-                    {r.returnDuration && (
-                      <div className="text-xs text-gray-400 mt-0.5">{formatDuration(r.returnDuration)}</div>
-                    )}
                   </td>
-
-                  {/* Stops */}
                   <td className="px-3 py-2.5 text-sm whitespace-nowrap">
                     <div>
                       <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
@@ -302,46 +247,22 @@ export function FlightResultsTable({ results, passengers: _passengers, showCache
                         <span className="text-[10px] text-gray-400 ml-1">{r.stopCodes.join(', ')}</span>
                       )}
                     </div>
-                    {r.returnStops !== undefined && (
-                      <div className="mt-0.5">
-                        <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
-                          r.returnStops === 0 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                        }`}>
-                          {r.returnStops === 0 ? 'Direct' : r.returnStops}
-                        </span>
-                        {r.returnStopCodes && r.returnStopCodes.length > 0 && (
-                          <span className="text-[10px] text-gray-400 ml-1">{r.returnStopCodes.join(', ')}</span>
-                        )}
-                      </div>
-                    )}
                   </td>
-
-                  {/* Layover */}
                   <td className="px-3 py-2.5 text-sm whitespace-nowrap text-gray-500">
                     <div>{outStopover > 0 ? formatMinutes(outStopover) : '-'}</div>
-                    {r.returnSegments && (
-                      <div className="text-xs text-gray-400 mt-0.5">{retStopover > 0 ? formatMinutes(retStopover) : '-'}</div>
-                    )}
                   </td>
-
-                  {/* Per Person */}
                   <td className="px-3 py-2.5 text-sm text-right whitespace-nowrap text-gray-600">
                     {formatCurrency(r.pricePerPerson)}
                   </td>
-
-                  {/* Total */}
                   <td className="px-3 py-2.5 text-sm text-right whitespace-nowrap font-semibold text-blue-700">
                     {formatCurrency(r.totalPrice)}
                   </td>
-
-                  {/* Cache age */}
                   {showCacheAge && isCacheResult(r) && (
                     <td className="px-3 py-2.5 text-xs whitespace-nowrap text-gray-400" title={r.queryCachedAt}>
                       <div>{formatAge(r.queryCachedAt)}</div>
                       <div className="text-[10px] text-gray-300">{formatCacheTimestamp(r.queryCachedAt)}</div>
                     </td>
                   )}
-
                 </tr>
               );
             })}
@@ -367,7 +288,6 @@ function FlightDetailModal({ flight, onClose }: { flight: FlightSearchResult; on
         className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">
@@ -381,36 +301,20 @@ function FlightDetailModal({ flight, onClose }: { flight: FlightSearchResult; on
             <X className="w-5 h-5 text-gray-400" />
           </button>
         </div>
-
-        {/* Body */}
-        <div className="px-5 py-4 space-y-5">
-          {/* Outbound */}
+        <div className="px-5 py-4">
           <LegDetail
-            label={flight.returnSegments ? 'Outbound' : undefined}
             segments={flight.segments}
             totalDuration={flight.duration}
             stops={flight.stops}
             stopCodes={flight.stopCodes}
           />
-
-          {/* Return */}
-          {flight.returnSegments && flight.returnSegments.length > 0 && (
-            <LegDetail
-              label="Return"
-              segments={flight.returnSegments}
-              totalDuration={flight.returnDuration || ''}
-              stops={flight.returnStops ?? 0}
-              stopCodes={flight.returnStopCodes || []}
-            />
-          )}
         </div>
       </div>
     </div>
   );
 }
 
-function LegDetail({ label, segments, totalDuration, stops, stopCodes }: {
-  label?: string;
+function LegDetail({ segments, totalDuration, stops, stopCodes }: {
   segments: FlightSegment[];
   totalDuration: string;
   stops: number;
@@ -418,13 +322,9 @@ function LegDetail({ label, segments, totalDuration, stops, stopCodes }: {
 }) {
   return (
     <div>
-      {label && (
-        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{label}</div>
-      )}
       <div className="space-y-0">
         {segments.map((seg, i) => {
           const offset = dayOffset(segments[0].departureAt, seg.arrivalAt);
-          // Layover between this segment and the next
           const layover = i < segments.length - 1
             ? Math.round((new Date(segments[i + 1].departureAt).getTime() - new Date(seg.arrivalAt).getTime()) / 60000)
             : 0;

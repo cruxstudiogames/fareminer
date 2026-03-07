@@ -8,6 +8,7 @@ export interface FlightSearchParams {
   nonStop?: boolean;
   currency?: string;
   returnDate?: string;
+  cabin?: string;
 }
 
 export interface FlightSegment {
@@ -143,7 +144,7 @@ async function searchFlights(params: FlightSearchParams): Promise<FlightSearchRe
   const from = params.origin.toUpperCase();
   const to = params.destination.toUpperCase();
   const currency = params.currency || 'USD';
-  const cabin = 'Economy';
+  const cabin = params.cabin || 'Economy';
 
   let url: string;
   if (params.returnDate) {

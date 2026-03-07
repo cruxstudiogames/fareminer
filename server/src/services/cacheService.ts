@@ -60,7 +60,17 @@ function buildCacheKey(params: FlightSearchParams): string {
     params.returnDate || '',
     String(params.adults),
     (params.currency || 'USD').toUpperCase(),
+    (params.cabin || 'Economy'),
   ].join('|');
+}
+
+/** Check which cache keys exist from a list of search param combos */
+export function checkCachedKeys(combos: FlightSearchParams[]): boolean[] {
+  const stmt = db.prepare('SELECT 1 FROM queries WHERE cache_key = ?');
+  return combos.map((params) => {
+    const key = buildCacheKey(params);
+    return stmt.get(key) !== undefined;
+  });
 }
 
 export function getCachedResults(params: FlightSearchParams): FlightSearchResult[] | null {
@@ -144,6 +154,7 @@ export interface CacheSearchFilters {
   departureDates?: string[];
   tripType?: 'any' | 'oneway' | 'roundtrip';
   limit?: number;
+  cabin?: string;
 }
 
 export function searchCachedResults(filters: CacheSearchFilters, userId?: number, includeLegacy = false) {
@@ -172,6 +183,10 @@ export function searchCachedResults(filters: CacheSearchFilters, userId?: number
     const dateConds = filters.departureDates.map(() => 'r.departure_at LIKE ?');
     conditions.push(`(${dateConds.join(' OR ')})`);
     params.push(...filters.departureDates.map((d) => `${d}%`));
+  }
+  if (filters.cabin) {
+    conditions.push('LOWER(r.cabin) = LOWER(?)');
+    params.push(filters.cabin);
   }
   if (filters.tripType === 'oneway') {
     conditions.push('r.return_departure_at IS NULL');

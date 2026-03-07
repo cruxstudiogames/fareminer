@@ -9,15 +9,27 @@ export interface FlightFilterState {
   selectedCarriers: Set<string>;
   depRange: [number, number];
   arrRange: [number, number];
+  selectedOrigins: Set<string>;
+  selectedDestinations: Set<string>;
+  selectedWaypoints: Set<string>;
+  includeNoVia: boolean; // include direct flights (no waypoints) when waypoint filter is active
+  departureDays: number[]; // 0=Sun..6=Sat, empty=all
+  selectedCabins: Set<string>;
 }
 
 export const defaultFilterState: FlightFilterState = {
-  stops: 'any',
+  stops: '2stop',
   maxDuration: null,
   mixedCarriers: 'any',
   selectedCarriers: new Set(),
   depRange: [0, 24],
   arrRange: [0, 24],
+  selectedOrigins: new Set(),
+  selectedDestinations: new Set(),
+  selectedWaypoints: new Set(),
+  includeNoVia: true,
+  departureDays: [],
+  selectedCabins: new Set(),
 };
 
 const DURATION_OPTIONS: { label: string; value: number }[] = [
@@ -29,6 +41,9 @@ const DURATION_OPTIONS: { label: string; value: number }[] = [
   { label: '< 24h', value: 1440 },
   { label: '< 28h', value: 1680 },
 ];
+
+const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const DAY_JS_VALUES = [1, 2, 3, 4, 5, 6, 0]; // Mon=1..Sat=6, Sun=0
 
 function isMixedCarrier(segments: FlightSegment[] | undefined): boolean {
   if (!segments || segments.length <= 1) return false;
@@ -49,280 +64,400 @@ function getHour(isoDate: string): number {
 export function applyFlightFilters(
   results: FlightSearchResult[],
   filters: FlightFilterState,
-  leg: 'outbound' | 'return' = 'outbound',
 ): FlightSearchResult[] {
   let filtered = results;
 
-  if (leg === 'outbound') {
-    // Stops
-    if (filters.stops === 'direct') filtered = filtered.filter((r) => r.stops === 0);
-    else if (filters.stops === '1stop') filtered = filtered.filter((r) => r.stops <= 1);
-    else if (filters.stops === '2stop') filtered = filtered.filter((r) => r.stops <= 2);
+  // Stops
+  if (filters.stops === 'direct') filtered = filtered.filter((r) => r.stops === 0);
+  else if (filters.stops === '1stop') filtered = filtered.filter((r) => r.stops <= 1);
+  else if (filters.stops === '2stop') filtered = filtered.filter((r) => r.stops <= 2);
 
-    // Duration
-    if (filters.maxDuration) filtered = filtered.filter((r) => parseDuration(r.duration) <= filters.maxDuration!);
+  // Duration
+  if (filters.maxDuration) filtered = filtered.filter((r) => parseDuration(r.duration) <= filters.maxDuration!);
 
-    // Mixed carriers
-    if (filters.mixedCarriers === 'yes') filtered = filtered.filter((r) => isMixedCarrier(r.segments));
-    else if (filters.mixedCarriers === 'no') filtered = filtered.filter((r) => !isMixedCarrier(r.segments));
+  // Mixed carriers
+  if (filters.mixedCarriers === 'yes') filtered = filtered.filter((r) => isMixedCarrier(r.segments));
+  else if (filters.mixedCarriers === 'no') filtered = filtered.filter((r) => !isMixedCarrier(r.segments));
 
-    // Carrier
-    if (filters.selectedCarriers.size > 0) {
-      filtered = filtered.filter((r) => filters.selectedCarriers.has(getCarrierName(r)));
-    }
+  // Carrier
+  if (filters.selectedCarriers.size > 0) {
+    filtered = filtered.filter((r) => filters.selectedCarriers.has(getCarrierName(r)));
+  }
 
-    // Dep time
-    if (filters.depRange[0] > 0 || filters.depRange[1] < 24) {
-      filtered = filtered.filter((r) => {
-        const h = getHour(r.departureAt);
-        return h >= filters.depRange[0] && h <= filters.depRange[1];
-      });
-    }
+  // Dep time
+  if (filters.depRange[0] > 0 || filters.depRange[1] < 24) {
+    filtered = filtered.filter((r) => {
+      const h = getHour(r.departureAt);
+      return h >= filters.depRange[0] && h <= filters.depRange[1];
+    });
+  }
 
-    // Arr time
-    if (filters.arrRange[0] > 0 || filters.arrRange[1] < 24) {
-      filtered = filtered.filter((r) => {
-        const h = getHour(r.arrivalAt);
-        return h >= filters.arrRange[0] && h <= filters.arrRange[1];
-      });
-    }
-  } else {
-    // Return leg filters
-    if (filters.stops === 'direct') filtered = filtered.filter((r) => (r.returnStops ?? 0) === 0);
-    else if (filters.stops === '1stop') filtered = filtered.filter((r) => (r.returnStops ?? 0) <= 1);
-    else if (filters.stops === '2stop') filtered = filtered.filter((r) => (r.returnStops ?? 0) <= 2);
+  // Arr time
+  if (filters.arrRange[0] > 0 || filters.arrRange[1] < 24) {
+    filtered = filtered.filter((r) => {
+      const h = getHour(r.arrivalAt);
+      return h >= filters.arrRange[0] && h <= filters.arrRange[1];
+    });
+  }
 
-    if (filters.maxDuration) filtered = filtered.filter((r) => r.returnDuration ? parseDuration(r.returnDuration) <= filters.maxDuration! : true);
+  // Origin filter
+  if (filters.selectedOrigins.size > 0) {
+    filtered = filtered.filter((r) => filters.selectedOrigins.has(r.origin));
+  }
 
-    if (filters.mixedCarriers === 'yes') filtered = filtered.filter((r) => isMixedCarrier(r.returnSegments));
-    else if (filters.mixedCarriers === 'no') filtered = filtered.filter((r) => !isMixedCarrier(r.returnSegments));
+  // Destination filter
+  if (filters.selectedDestinations.size > 0) {
+    filtered = filtered.filter((r) => filters.selectedDestinations.has(r.destination));
+  }
 
-    if (filters.selectedCarriers.size > 0) {
-      filtered = filtered.filter((r) => {
-        const name = r.returnSegments?.length ? r.returnSegments[0].airlineName : r.airlineName;
-        return filters.selectedCarriers.has(name);
-      });
-    }
+  // Waypoint filter
+  if (filters.selectedWaypoints.size > 0) {
+    filtered = filtered.filter((r) => {
+      const isDirect = !r.stopCodes || r.stopCodes.length === 0;
+      if (isDirect) return filters.includeNoVia;
+      return r.stopCodes.some((code) => filters.selectedWaypoints.has(code));
+    });
+  } else if (!filters.includeNoVia) {
+    // "None" unchecked with no specific waypoints = show only flights with stops
+    filtered = filtered.filter((r) => r.stopCodes && r.stopCodes.length > 0);
+  }
 
-    if (filters.depRange[0] > 0 || filters.depRange[1] < 24) {
-      filtered = filtered.filter((r) => {
-        if (!r.returnDepartureAt) return true;
-        const h = getHour(r.returnDepartureAt);
-        return h >= filters.depRange[0] && h <= filters.depRange[1];
-      });
-    }
+  // Cabin filter
+  if (filters.selectedCabins.size > 0) {
+    filtered = filtered.filter((r) => filters.selectedCabins.has(r.cabin));
+  }
 
-    if (filters.arrRange[0] > 0 || filters.arrRange[1] < 24) {
-      filtered = filtered.filter((r) => {
-        if (!r.returnArrivalAt) return true;
-        const h = getHour(r.returnArrivalAt);
-        return h >= filters.arrRange[0] && h <= filters.arrRange[1];
-      });
-    }
+  // Departure day of week filter
+  if (filters.departureDays.length > 0) {
+    filtered = filtered.filter((r) => {
+      const d = new Date(r.departureAt);
+      return filters.departureDays.includes(d.getDay());
+    });
   }
 
   return filtered;
 }
 
-/** Extract all unique carrier names from results for a given leg */
-export function extractCarriers(results: FlightSearchResult[], leg: 'outbound' | 'return' = 'outbound'): string[] {
+/** Extract all unique carrier names from results */
+export function extractCarriers(results: FlightSearchResult[]): string[] {
   const set = new Set<string>();
   for (const r of results) {
-    if (leg === 'outbound') {
-      set.add(getCarrierName(r));
-    } else {
-      const name = r.returnSegments?.length ? r.returnSegments[0].airlineName : r.airlineName;
-      set.add(name);
+    set.add(getCarrierName(r));
+  }
+  return Array.from(set).sort();
+}
+
+/** Extract unique values for a field from results */
+export function extractUniqueValues(results: FlightSearchResult[], field: 'origin' | 'destination' | 'waypoints'): string[] {
+  const set = new Set<string>();
+  for (const r of results) {
+    if (field === 'origin') set.add(r.origin);
+    else if (field === 'destination') set.add(r.destination);
+    else if (field === 'waypoints' && r.stopCodes) {
+      for (const code of r.stopCodes) set.add(code);
     }
   }
   return Array.from(set).sort();
 }
 
-interface TripLengthFilterProps {
-  min: number;
-  max: number;
-  effectiveMin: number;
-  effectiveMax: number;
-  onMinChange: (v: number | null) => void;
-  onMaxChange: (v: number | null) => void;
-  filteredCount: number;
-  totalCount: number;
-}
-
 interface FlightFiltersProps {
-  label?: string;
   filters: FlightFilterState;
   onChange: (f: FlightFilterState) => void;
   carriers: string[];
-  tripLength?: TripLengthFilterProps;
+  origins: string[];
+  destinations: string[];
+  waypoints: string[];
 }
 
-export function FlightFilters({ label, filters, onChange, carriers, tripLength }: FlightFiltersProps) {
-  const [carrierDropdownOpen, setCarrierDropdownOpen] = useState(false);
+const CABIN_FILTER_OPTIONS = ['First', 'Business', 'Premium Economy', 'Economy'];
 
-  const allSelected = filters.selectedCarriers.size === 0;
+export function FlightFilters({ filters, onChange, carriers, origins, destinations, waypoints }: FlightFiltersProps) {
+  const [carrierDropdownOpen, setCarrierDropdownOpen] = useState(false);
+  const [originDropdownOpen, setOriginDropdownOpen] = useState(false);
+  const [destDropdownOpen, setDestDropdownOpen] = useState(false);
+  const [waypointDropdownOpen, setWaypointDropdownOpen] = useState(false);
+  const [cabinDropdownOpen, setCabinDropdownOpen] = useState(false);
+
+  const allCarriersSelected = filters.selectedCarriers.size === 0;
 
   const toggleCarrier = (carrier: string) => {
     const next = new Set(filters.selectedCarriers);
-    if (next.has(carrier)) {
-      next.delete(carrier);
-    } else {
-      next.add(carrier);
-    }
+    if (next.has(carrier)) next.delete(carrier);
+    else next.add(carrier);
     onChange({ ...filters, selectedCarriers: next });
   };
 
-  const selectAllCarriers = () => {
-    onChange({ ...filters, selectedCarriers: new Set() });
-  };
-
-  const carrierButtonLabel = allSelected
+  const carrierButtonLabel = allCarriersSelected
     ? 'All'
     : filters.selectedCarriers.size === 1
       ? [...filters.selectedCarriers][0]
       : `${filters.selectedCarriers.size} selected`;
 
+  const toggleDepartureDay = (day: number) => {
+    const days = filters.departureDays.includes(day)
+      ? filters.departureDays.filter((d) => d !== day)
+      : [...filters.departureDays, day];
+    onChange({ ...filters, departureDays: days });
+  };
+
   return (
     <div className="px-3 sm:px-6 py-2 bg-gray-50 border-b border-gray-200">
-      {label && <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">{label}</div>}
-      <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
         {/* Stops */}
-        <div className="flex items-center gap-1.5 text-xs text-gray-600">
-          <span>Stops:</span>
-          <select
-            value={filters.stops}
-            onChange={(e) => onChange({ ...filters, stops: e.target.value as FlightFilterState['stops'] })}
-            className="border border-gray-300 rounded px-1.5 py-0.5 text-xs"
-          >
-            <option value="any">Any</option>
-            <option value="direct">Direct only</option>
-            <option value="1stop">&le; 1 stop</option>
-            <option value="2stop">&le; 2 stops</option>
-          </select>
-        </div>
+        <FilterSelect
+          label="Stops"
+          value={filters.stops}
+          onChange={(v) => onChange({ ...filters, stops: v as FlightFilterState['stops'] })}
+          options={[
+            { value: 'any', label: 'Any' },
+            { value: 'direct', label: 'Direct' },
+            { value: '1stop', label: '\u2264 1 stop' },
+            { value: '2stop', label: '\u2264 2 stops' },
+          ]}
+        />
 
         {/* Duration */}
-        <div className="flex items-center gap-1.5 text-xs text-gray-600">
-          <span>Duration:</span>
-          <select
-            value={filters.maxDuration ?? ''}
-            onChange={(e) => onChange({ ...filters, maxDuration: e.target.value ? Number(e.target.value) : null })}
-            className="border border-gray-300 rounded px-1.5 py-0.5 text-xs"
-          >
-            <option value="">Any</option>
-            {DURATION_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </div>
+        <FilterSelect
+          label="Duration"
+          value={filters.maxDuration != null ? String(filters.maxDuration) : ''}
+          onChange={(v) => onChange({ ...filters, maxDuration: v ? Number(v) : null })}
+          options={[{ value: '', label: 'Any' }, ...DURATION_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))]}
+        />
 
         {/* Mixed carriers */}
-        <div className="flex items-center gap-1.5 text-xs text-gray-600">
-          <span>Mixed:</span>
-          <select
-            value={filters.mixedCarriers}
-            onChange={(e) => onChange({ ...filters, mixedCarriers: e.target.value as FlightFilterState['mixedCarriers'] })}
-            className="border border-gray-300 rounded px-1.5 py-0.5 text-xs"
-          >
-            <option value="any">Any</option>
-            <option value="no">No</option>
-            <option value="yes">Yes</option>
-          </select>
-        </div>
+        <FilterSelect
+          label="Mixed"
+          value={filters.mixedCarriers}
+          onChange={(v) => onChange({ ...filters, mixedCarriers: v as FlightFilterState['mixedCarriers'] })}
+          options={[
+            { value: 'any', label: 'Any' },
+            { value: 'no', label: 'No' },
+            { value: 'yes', label: 'Yes' },
+          ]}
+        />
 
         {/* Carrier multi-select */}
-        <div className="flex items-center gap-1.5 text-xs text-gray-600 relative">
-          <span>Carrier:</span>
-          <button
-            type="button"
-            onClick={() => setCarrierDropdownOpen(!carrierDropdownOpen)}
-            className="border border-gray-300 rounded px-1.5 py-0.5 text-xs bg-white min-w-[80px] text-left"
-          >
-            {carrierButtonLabel}
-          </button>
-          {carrierDropdownOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setCarrierDropdownOpen(false)} />
-              <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[180px] max-h-60 overflow-auto">
-                <button
-                  onClick={selectAllCarriers}
-                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 ${allSelected ? 'text-blue-700 font-medium' : 'text-gray-600'}`}
-                >
-                  Select All
-                </button>
-                <div className="border-t border-gray-100 my-0.5" />
-                {carriers.map((c) => (
-                  <label key={c} className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-blue-50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={allSelected || filters.selectedCarriers.has(c)}
-                      onChange={() => {
-                        if (allSelected) {
-                          // Switch from "all" to selecting all except this one
-                          const next = new Set(carriers);
-                          next.delete(c);
-                          onChange({ ...filters, selectedCarriers: next });
-                        } else {
-                          toggleCarrier(c);
-                        }
-                      }}
-                      className="rounded"
-                    />
-                    {c}
-                  </label>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        <MultiSelectDropdown
+          label="Carrier"
+          buttonLabel={carrierButtonLabel}
+          open={carrierDropdownOpen}
+          setOpen={setCarrierDropdownOpen}
+          items={carriers}
+          selected={filters.selectedCarriers}
+          allSelected={allCarriersSelected}
+          onToggle={toggleCarrier}
+          onSelectAll={() => onChange({ ...filters, selectedCarriers: new Set() })}
+        />
 
-        {/* Departure time slider */}
+        {/* Dep time */}
         <div className="flex items-center gap-1.5 text-xs text-gray-600">
-          <span>Depart:</span>
+          <span>Dep:</span>
           <TimeRangeSlider value={filters.depRange} onChange={(v) => onChange({ ...filters, depRange: v })} />
         </div>
 
-        {/* Arrival time slider */}
+        {/* Arr time */}
         <div className="flex items-center gap-1.5 text-xs text-gray-600">
-          <span>Arrive:</span>
+          <span>Arr:</span>
           <TimeRangeSlider value={filters.arrRange} onChange={(v) => onChange({ ...filters, arrRange: v })} />
         </div>
 
-        {/* Trip length (optional, time sweep only) */}
-        {tripLength && (
-          <div className="flex items-center gap-1.5 text-xs text-gray-600">
-            <span>Trip:</span>
-            <input
-              type="number"
-              value={tripLength.effectiveMin}
-              onChange={(e) => tripLength.onMinChange(Math.max(1, parseInt(e.target.value) || 1))}
-              min={1}
-              max={tripLength.effectiveMax}
-              className="w-14 border border-gray-300 rounded px-1.5 py-0.5 text-xs"
-            />
-            <span>to</span>
-            <input
-              type="number"
-              value={tripLength.effectiveMax}
-              onChange={(e) => tripLength.onMaxChange(Math.max(tripLength.effectiveMin, parseInt(e.target.value) || tripLength.effectiveMin))}
-              min={tripLength.effectiveMin}
-              className="w-14 border border-gray-300 rounded px-1.5 py-0.5 text-xs"
-            />
-            <span>days</span>
-            {(tripLength.effectiveMin !== tripLength.min || tripLength.effectiveMax !== tripLength.max) && (
-              <button
-                onClick={() => { tripLength.onMinChange(null); tripLength.onMaxChange(null); }}
-                className="text-blue-600 hover:text-blue-800 ml-1"
-              >
-                Reset
-              </button>
-            )}
-            <span className="text-gray-400 ml-1">
-              {tripLength.filteredCount}/{tripLength.totalCount}
-            </span>
-          </div>
+        {/* Origin filter */}
+        {origins.length > 1 && (
+          <MultiSelectDropdown
+            label="Origin"
+            buttonLabel={filters.selectedOrigins.size === 0 ? 'All' : `${filters.selectedOrigins.size} selected`}
+            open={originDropdownOpen}
+            setOpen={setOriginDropdownOpen}
+            items={origins}
+            selected={filters.selectedOrigins}
+            allSelected={filters.selectedOrigins.size === 0}
+            onToggle={(code) => {
+              const next = new Set(filters.selectedOrigins);
+              if (next.has(code)) next.delete(code);
+              else next.add(code);
+              onChange({ ...filters, selectedOrigins: next });
+            }}
+            onSelectAll={() => onChange({ ...filters, selectedOrigins: new Set() })}
+          />
         )}
+
+        {/* Destination filter */}
+        {destinations.length > 1 && (
+          <MultiSelectDropdown
+            label="Dest"
+            buttonLabel={filters.selectedDestinations.size === 0 ? 'All' : `${filters.selectedDestinations.size} selected`}
+            open={destDropdownOpen}
+            setOpen={setDestDropdownOpen}
+            items={destinations}
+            selected={filters.selectedDestinations}
+            allSelected={filters.selectedDestinations.size === 0}
+            onToggle={(code) => {
+              const next = new Set(filters.selectedDestinations);
+              if (next.has(code)) next.delete(code);
+              else next.add(code);
+              onChange({ ...filters, selectedDestinations: next });
+            }}
+            onSelectAll={() => onChange({ ...filters, selectedDestinations: new Set() })}
+          />
+        )}
+
+        {/* Waypoint filter */}
+        {waypoints.length > 0 && (
+          <MultiSelectDropdown
+            label="Via"
+            buttonLabel={filters.selectedWaypoints.size === 0 ? 'All' : `${filters.selectedWaypoints.size} selected`}
+            open={waypointDropdownOpen}
+            setOpen={setWaypointDropdownOpen}
+            items={waypoints}
+            selected={filters.selectedWaypoints}
+            allSelected={filters.selectedWaypoints.size === 0}
+            onToggle={(code) => {
+              const next = new Set(filters.selectedWaypoints);
+              if (next.has(code)) next.delete(code);
+              else next.add(code);
+              onChange({ ...filters, selectedWaypoints: next });
+            }}
+            onSelectAll={() => onChange({ ...filters, selectedWaypoints: new Set(), includeNoVia: true })}
+            noneOption={{
+              checked: filters.includeNoVia,
+              onChange: (v) => onChange({ ...filters, includeNoVia: v }),
+            }}
+          />
+        )}
+
+        {/* Departure day of week */}
+        <div className="flex items-center gap-1 text-xs text-gray-600">
+          <span>Day:</span>
+          {DAY_LABELS.map((label, i) => {
+            const jsDay = DAY_JS_VALUES[i];
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => toggleDepartureDay(jsDay)}
+                className={`w-5 h-5 rounded text-[10px] font-medium transition-colors ${
+                  filters.departureDays.length === 0 || filters.departureDays.includes(jsDay)
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'bg-gray-100 text-gray-400'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Cabin filter */}
+        <MultiSelectDropdown
+          label="Cabin"
+          buttonLabel={filters.selectedCabins.size === 0 ? 'All' : `${filters.selectedCabins.size} selected`}
+          open={cabinDropdownOpen}
+          setOpen={setCabinDropdownOpen}
+          items={CABIN_FILTER_OPTIONS}
+          selected={filters.selectedCabins}
+          allSelected={filters.selectedCabins.size === 0}
+          onToggle={(cabin) => {
+            const next = new Set(filters.selectedCabins);
+            if (next.has(cabin)) next.delete(cabin);
+            else next.add(cabin);
+            onChange({ ...filters, selectedCabins: next });
+          }}
+          onSelectAll={() => onChange({ ...filters, selectedCabins: new Set() })}
+        />
       </div>
+    </div>
+  );
+}
+
+function FilterSelect({ label, value, onChange, options }: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-gray-600">
+      <span>{label}:</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="border border-gray-300 rounded px-1.5 py-0.5 text-xs"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function MultiSelectDropdown({ label, buttonLabel, open, setOpen, items, selected, allSelected, onToggle, onSelectAll, noneOption }: {
+  label: string;
+  buttonLabel: string;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  items: string[];
+  selected: Set<string>;
+  allSelected: boolean;
+  onToggle: (item: string) => void;
+  onSelectAll: () => void;
+  noneOption?: { checked: boolean; onChange: (v: boolean) => void };
+}) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-gray-600 relative">
+      <span>{label}:</span>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="border border-gray-300 rounded px-1.5 py-0.5 text-xs bg-white min-w-[60px] text-left"
+      >
+        {buttonLabel}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[160px] max-h-60 overflow-auto">
+            <button
+              onClick={onSelectAll}
+              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 ${allSelected ? 'text-blue-700 font-medium' : 'text-gray-600'}`}
+            >
+              Select All
+            </button>
+            {noneOption && (
+              <label className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-blue-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={noneOption.checked}
+                  onChange={(e) => noneOption.onChange(e.target.checked)}
+                  className="rounded"
+                />
+                <span className="italic text-gray-500">None (direct)</span>
+              </label>
+            )}
+            <div className="border-t border-gray-100 my-0.5" />
+            {items.map((item) => (
+              <label key={item} className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-blue-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allSelected || selected.has(item)}
+                  onChange={() => {
+                    if (allSelected) {
+                      // Switch from "all" to selecting all except this one
+                      for (const i of items) {
+                        if (i !== item) onToggle(i);
+                      }
+                      return;
+                    }
+                    onToggle(item);
+                  }}
+                  className="rounded"
+                />
+                {item}
+              </label>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

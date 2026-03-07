@@ -37,25 +37,19 @@ export function Header() {
 
         {user && (
           <div className="flex items-center gap-1 sm:gap-2">
-            {user.role === 'user' && (
-              <div className="flex items-center gap-1 mr-1">
-                <Coins className="w-3.5 h-3.5 text-amber-500" />
-                <span className="text-xs font-medium text-gray-700">{user.credits}</span>
-                <button
-                  onClick={handlePurchase}
-                  disabled={purchasing}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium px-1.5 py-0.5 rounded hover:bg-blue-50 disabled:opacity-50"
-                >
-                  {purchasing ? '...' : 'Buy'}
-                </button>
-              </div>
-            )}
-            {user.role === 'admin' && (
-              <div className="flex items-center gap-1 mr-1">
-                <Coins className="w-3.5 h-3.5 text-amber-500" />
-                <span className="text-xs font-medium text-gray-700">{user.credits}</span>
-              </div>
-            )}
+            <div className="flex items-center gap-1 mr-1">
+              <Coins className="w-3.5 h-3.5 text-amber-500" />
+              <span className="text-xs font-medium text-gray-700">
+                {user.role === 'owner' ? '\u221e' : user.credits}
+              </span>
+              <button
+                onClick={handlePurchase}
+                disabled={purchasing}
+                className="text-xs text-blue-600 hover:text-blue-800 font-medium px-1.5 py-0.5 rounded hover:bg-blue-50 disabled:opacity-50"
+              >
+                {purchasing ? '...' : 'Buy'}
+              </button>
+            </div>
             {user.picture && (
               <img
                 src={user.picture}

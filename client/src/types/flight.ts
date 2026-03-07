@@ -6,6 +6,7 @@ export interface FlightSearchParams {
   nonStop?: boolean;
   currency?: string;
   returnDate?: string;
+  cabin?: string;
 }
 
 export interface CachedQuery {
