@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'trip_planner_state';
+const STORAGE_KEY = 'fare_miner_state';
 
 interface SavedState {
   tripName: string;

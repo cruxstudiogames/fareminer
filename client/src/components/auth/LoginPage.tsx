@@ -13,7 +13,7 @@ export function LoginPage() {
       <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-sm text-center">
         <div className="flex items-center justify-center gap-2 text-blue-600 mb-2">
           <Plane className="w-8 h-8" />
-          <span className="font-bold text-2xl">Trip Planner</span>
+          <span className="font-bold text-2xl">Fare Miner</span>
         </div>
         <p className="text-gray-500 text-sm mb-6">
           Sign in to plan and save your trips

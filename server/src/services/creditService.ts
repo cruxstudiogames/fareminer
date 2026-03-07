@@ -19,7 +19,7 @@ export function deductCredit(userId: number): boolean {
 
   db.prepare(
     'INSERT INTO credit_transactions (user_id, amount, type, description, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(userId, -1, 'search', 'Flight search', new Date().toISOString());
+  ).run(userId, -1, 'search', 'Fare Miner search', new Date().toISOString());
 
   return true;
 }
