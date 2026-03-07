@@ -32,13 +32,13 @@ Table of query fields shown below. The intent is to auto fill as many possible t
 
 | Field                  | Default             | Comment                                                                                                            |
 | ---------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Departure Port         | Blank               | 3 letter airport codes, auto correct (airport code first, then airport name, then country), multi-select possible  |
+| Departure Port         | Home port           | 3 letter airport codes, auto correct (airport code first, then airport name, then country), multi-select possible  |
 | Arrival Port           | Blank               | 3 letter airport codes, auto correct (airport code first, then airport name, then country) , multi-select possible |
 | Departure Date (Begin) | Today + 1           | Start of departure days to search                                                                                  |
 | Departure Date (End)   | Today + 1           | End of departure days to search                                                                                    |
 | Day of Week            | Blank (meaning all) | MTWTFSS easy to select, filters the departure days we are searching                                                |
 | Passengers             | 1                   |                                                                                                                    |
-| Currency               | Local Currency      |                                                                                                                    |
+| Currency               | Default Currency    |                                                                                                                    |
 | Cabin                  | Economy             |                                                                                                                    |
 | Live search            | False               | False means use the cache, true means use a live search. Must warn user about credits being used                   |
 
@@ -46,6 +46,7 @@ Beneath the filters there is a search button
 Of the number of search queries, it should flag how many are currently cached and how many would required new api calls.
 Next to the search button is the amount of credits they will be using in the search.
 Search should remember recently searched items by that specific user.
+Moving the departure date begin should appropriately update departure date end
 
 ## Results Filters (2)
 
@@ -63,7 +64,7 @@ The principle is that the query should get and store all results. The user can t
 | Destination           | Unique list of destination ports from results   | All              | Y            |                                                                        |
 | Via Points            | Unique list of via ports from results           | All              | Y            | All selected, need a none button. This is to make it easy for the user |
 | Departure day of week | MTWTFSS                                         | None meaning all | Y            | Separate from search Day of Week                                       |
-| Cabin                 | First, Business, Prem. Economy, Economy         | All              | Y            |                                                                        |
+| Cabin                 | First, Business, Prememium Economy, Economy     | All              | Y            | Premium_Economy is sent to API                                         |
 
 ## Results Views (3)
 
