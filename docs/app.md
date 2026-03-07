@@ -10,8 +10,9 @@
 ## Credit system
 
 - Public users can browse cached data from the last 24 hours
-- Public users pay $5 USD for 1000 search credits to search for custom routes
-- Admin users have 10,000 search credits per month (auto-granted on login each month)
+- Public users pay $5 USD for 1000 search credits to search for custom routes. Users can by in multiples of 1000.
+- Each API call uses 1 credit
+- Admin users have 10,000 search credits per month (auto-granted on login each month). It is possible for them to buy more if required.
 - Owner user has unlimited searches (no credit tracking)
 - Users can become admins if they contribute to the git repo and email is white listed (owner is decider of contribution worthiness)
 - Public users: can only log in when ENABLE_PUBLIC_ACCESS=TRUE, otherwise denied
@@ -42,6 +43,7 @@ Table of query fields shown below.
 
 Beneath the filters there is a search button
 Next to the search button is the amount of credits they will be using in the search
+Search should remember recently searched items by that specific user.
 
 ## Results Filters (2)
 
