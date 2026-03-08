@@ -1,4 +1,5 @@
 import { getCachedResults, cacheResults } from './cacheService.js';
+import logger from './logger.js';
 
 export interface FlightSearchParams {
   origin: string;
@@ -122,16 +123,16 @@ function minutesToIsoDuration(minutes: number): string {
 
 export async function searchFlightsWithCache(params: FlightSearchParams, fresh = false, timeSweepId?: string, userId?: number): Promise<FlightSearchResult[]> {
   if (!fresh) {
-    const cached = getCachedResults(params);
+    const cached = await getCachedResults(params);
     if (cached) {
-      console.log(`Cache hit for ${params.origin} -> ${params.destination}`);
+      logger.info({ origin: params.origin, destination: params.destination }, 'Cache hit');
       return cached;
     }
   }
 
   const results = await searchFlights(params);
-  cacheResults(params, results, timeSweepId, userId);
-  console.log(`Cached ${results.length} results for ${params.origin} -> ${params.destination}`);
+  await cacheResults(params, results, timeSweepId, userId);
+  logger.info({ origin: params.origin, destination: params.destination, count: results.length }, 'Cached results');
   return results;
 }
 
@@ -155,42 +156,33 @@ async function searchFlights(params: FlightSearchParams): Promise<FlightSearchRe
     url = `https://api.flightapi.io/onewaytrip/${apiKey}/${from}/${to}/${params.departureDate}/${params.adults}/0/0/${cabin}/${currency}`;
   }
 
-  // Log the request URL (mask API key)
-  console.log(`FlightAPI request: ${url.replace(apiKey, '***')}`);
+  logger.info({ url: url.replace(apiKey, '***') }, 'FlightAPI request');
 
   let response = await fetch(url);
 
   // Retry once after a short delay on 400 (transient error)
   if (response.status === 400) {
     const text = await response.text().catch(() => '');
-    console.log(`FlightAPI 400 response: ${text} — retrying in 3s...`);
+    logger.warn({ status: 400, body: text }, 'FlightAPI 400 — retrying in 3s');
     await new Promise((r) => setTimeout(r, 3000));
     response = await fetch(url);
   }
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    console.log(`FlightAPI error ${response.status}: ${text}`);
+    logger.error({ status: response.status, body: text }, 'FlightAPI error');
     throw new Error(`FlightAPI error: ${response.status} - ${text}`);
   }
 
   const body = await response.json() as FlightApiResponse;
 
-  // Debug: log response structure
-  console.log('FlightAPI response keys:', Object.keys(body));
-  console.log('Type of itineraries:', typeof body.itineraries, Array.isArray(body.itineraries));
-  console.log('Counts:', {
+  logger.debug({
     itineraries: body.itineraries?.length,
     legs: body.legs?.length,
     segments: body.segments?.length,
     places: body.places?.length,
     carriers: body.carriers?.length,
-  });
-  // Log raw itineraries value if it's not an array (might be an object/map)
-  if (body.itineraries && !Array.isArray(body.itineraries)) {
-    console.log('itineraries is NOT an array! Keys:', Object.keys(body.itineraries as unknown as object));
-    console.log('itineraries sample:', JSON.stringify(body.itineraries).substring(0, 500));
-  }
+  }, 'FlightAPI response counts');
 
   // Build lookup maps - use string keys for safety (API may mix string/number IDs)
   const placesMap = new Map<string, FlightApiPlace>();
@@ -215,14 +207,7 @@ async function searchFlights(params: FlightSearchParams): Promise<FlightSearchRe
 
   const itineraries = body.itineraries ?? [];
 
-  // Log stop count breakdown
-  const stopBreakdown: Record<number, number> = {};
-  for (const it of itineraries) {
-    const leg = legsMap.get(String(it.leg_ids[0]));
-    const stops = leg?.stop_count ?? -1;
-    stopBreakdown[stops] = (stopBreakdown[stops] || 0) + 1;
-  }
-  console.log(`Total itineraries: ${itineraries.length}, by stops:`, stopBreakdown);
+  logger.debug({ total: itineraries.length }, 'Processing itineraries');
 
   function resolveSegments(leg: FlightApiLeg): FlightSegment[] {
     return leg.segment_ids.map((segId) => {

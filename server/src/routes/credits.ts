@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import Stripe from 'stripe';
 import { getUserCredits, addCredits, getCreditHistory, CREDITS_PER_PURCHASE, PRICE_USD_CENTS } from '../services/creditService.js';
+import logger from '../services/logger.js';
 
 export const creditsRouter = Router();
 
@@ -11,14 +12,14 @@ function getStripe() {
 }
 
 // Get credit balance
-creditsRouter.get('/balance', (req, res) => {
-  const credits = getUserCredits(req.user!.id);
+creditsRouter.get('/balance', async (req, res) => {
+  const credits = await getUserCredits(req.user!.id);
   res.json({ credits });
 });
 
 // Get credit history
-creditsRouter.get('/history', (req, res) => {
-  const history = getCreditHistory(req.user!.id);
+creditsRouter.get('/history', async (req, res) => {
+  const history = await getCreditHistory(req.user!.id);
   res.json({ history });
 });
 
@@ -55,7 +56,7 @@ creditsRouter.post('/purchase', async (req, res) => {
 
     res.json({ url: session.url });
   } catch (err) {
-    console.error('Stripe checkout error:', err);
+    logger.error({ err }, 'Stripe checkout error');
     res.status(500).json({ error: 'Failed to create checkout session' });
   }
 });
@@ -84,17 +85,18 @@ creditsRouter.post('/verify', async (req, res) => {
     }
 
     // Check if we already granted credits for this session (idempotent)
-    const history = getCreditHistory(userId) as Array<{ stripe_session_id: string | null }>;
+    const history = await getCreditHistory(userId) as Array<{ stripe_session_id: string | null }>;
     const existing = history.find((t) => t.stripe_session_id === sessionId);
     if (!existing) {
       const credits = Number(session.metadata?.credits) || CREDITS_PER_PURCHASE;
-      addCredits(userId, credits, sessionId);
-      console.log(`Verified & added ${credits} credits to user ${userId} (session: ${sessionId})`);
+      await addCredits(userId, credits, sessionId);
+      logger.info({ userId, credits, sessionId }, 'Credits verified and added');
     }
 
-    res.json({ credits: getUserCredits(req.user!.id) });
+    const credits = await getUserCredits(req.user!.id);
+    res.json({ credits });
   } catch (err) {
-    console.error('Verify error:', err);
+    logger.error({ err }, 'Verify error');
     res.status(500).json({ error: 'Failed to verify payment' });
   }
 });
@@ -110,7 +112,7 @@ export function createWebhookHandler() {
       const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
       if (!webhookSecret) {
-        console.error('STRIPE_WEBHOOK_SECRET not set');
+        logger.error('STRIPE_WEBHOOK_SECRET not set');
         res.status(500).json({ error: 'Webhook not configured' });
         return;
       }
@@ -123,14 +125,14 @@ export function createWebhookHandler() {
         const credits = Number(session.metadata?.credits);
 
         if (userId && credits) {
-          addCredits(userId, credits, session.id);
-          console.log(`Added ${credits} credits to user ${userId} (session: ${session.id})`);
+          await addCredits(userId, credits, session.id);
+          logger.info({ userId, credits, sessionId: session.id }, 'Webhook: credits added');
         }
       }
 
       res.json({ received: true });
     } catch (err) {
-      console.error('Webhook error:', err);
+      logger.error({ err }, 'Webhook error');
       res.status(400).json({ error: 'Webhook verification failed' });
     }
   });

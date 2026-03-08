@@ -1,58 +1,8 @@
-import db from './database.js';
+import pool from './database.js';
+import { getFromRedis, setInRedis, deleteFromRedis } from './redis.js';
 import type { FlightSearchParams, FlightSearchResult, FlightSegment } from './flightService.js';
 
 const CACHE_VISIBLE_DAYS = parseInt(process.env.CACHE_VISIBLE_DAYS || '7', 10);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS queries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    origin TEXT NOT NULL,
-    destination TEXT NOT NULL,
-    departure_date TEXT NOT NULL,
-    return_date TEXT,
-    adults INTEGER NOT NULL,
-    non_stop INTEGER NOT NULL DEFAULT 0,
-    currency TEXT NOT NULL DEFAULT 'USD',
-    cache_key TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    query_id INTEGER NOT NULL REFERENCES queries(id) ON DELETE CASCADE,
-    offer_id TEXT NOT NULL,
-    airline_code TEXT NOT NULL,
-    airline_name TEXT NOT NULL,
-    flight_number TEXT NOT NULL,
-    origin TEXT NOT NULL,
-    destination TEXT NOT NULL,
-    departure_at TEXT NOT NULL,
-    arrival_at TEXT NOT NULL,
-    duration TEXT NOT NULL,
-    stops INTEGER NOT NULL,
-    stop_codes TEXT NOT NULL,
-    total_price REAL NOT NULL,
-    price_per_person REAL NOT NULL,
-    currency TEXT NOT NULL,
-    cabin TEXT NOT NULL,
-    return_departure_at TEXT,
-    return_arrival_at TEXT,
-    return_duration TEXT,
-    return_stops INTEGER,
-    return_flight_number TEXT,
-    return_origin TEXT,
-    return_destination TEXT,
-    return_stop_codes TEXT,
-    segments_json TEXT,
-    return_segments_json TEXT
-  );
-`);
-
-// Migration for existing databases: add segments columns if missing
-try { db.exec('ALTER TABLE results ADD COLUMN segments_json TEXT'); } catch { /* column already exists */ }
-try { db.exec('ALTER TABLE results ADD COLUMN return_segments_json TEXT'); } catch { /* column already exists */ }
-try { db.exec('ALTER TABLE queries ADD COLUMN time_sweep_id TEXT'); } catch { /* column already exists */ }
-try { db.exec('ALTER TABLE queries ADD COLUMN user_id INTEGER'); } catch { /* column already exists */ }
 
 function buildCacheKey(params: FlightSearchParams): string {
   return [
@@ -67,26 +17,41 @@ function buildCacheKey(params: FlightSearchParams): string {
 }
 
 /** Check which cache keys exist from a list of search param combos (within visible window) */
-export function checkCachedKeys(combos: FlightSearchParams[]): boolean[] {
-  const stmt = db.prepare(
-    "SELECT 1 FROM queries WHERE cache_key = ? AND created_at >= datetime('now', '-' || ? || ' days')"
-  );
-  return combos.map((params) => {
+export async function checkCachedKeys(combos: FlightSearchParams[]): Promise<boolean[]> {
+  const results: boolean[] = [];
+  for (const params of combos) {
     const key = buildCacheKey(params);
-    return stmt.get(key, CACHE_VISIBLE_DAYS) !== undefined;
-  });
+    const { rows } = await pool.query(
+      "SELECT 1 FROM queries WHERE cache_key = $1 AND created_at::timestamptz >= NOW() - INTERVAL '1 day' * $2",
+      [key, CACHE_VISIBLE_DAYS]
+    );
+    results.push(rows.length > 0);
+  }
+  return results;
 }
 
-export function getCachedResults(params: FlightSearchParams): FlightSearchResult[] | null {
+export async function getCachedResults(params: FlightSearchParams): Promise<FlightSearchResult[] | null> {
   const key = buildCacheKey(params);
 
-  const query = db.prepare(
-    "SELECT id FROM queries WHERE cache_key = ? AND created_at >= datetime('now', '-' || ? || ' days')"
-  ).get(key, CACHE_VISIBLE_DAYS) as { id: number } | undefined;
-  if (!query) return null;
+  // Try Redis first
+  const cached = await getFromRedis(key);
+  if (cached) {
+    return JSON.parse(cached) as FlightSearchResult[];
+  }
 
-  const rows = db.prepare('SELECT * FROM results WHERE query_id = ?').all(query.id) as Array<Record<string, unknown>>;
-  return rows.map(mapRowToResult);
+  const { rows: queryRows } = await pool.query(
+    "SELECT id FROM queries WHERE cache_key = $1 AND created_at::timestamptz >= NOW() - INTERVAL '1 day' * $2",
+    [key, CACHE_VISIBLE_DAYS]
+  );
+  if (queryRows.length === 0) return null;
+
+  const { rows } = await pool.query('SELECT * FROM results WHERE query_id = $1', [queryRows[0].id]);
+  const mapped = rows.map(mapRowToResult);
+
+  // Store in Redis for next time
+  await setInRedis(key, JSON.stringify(mapped));
+
+  return mapped;
 }
 
 function mapRowToResult(row: Record<string, unknown>): FlightSearchResult {
@@ -124,22 +89,28 @@ function mapRowToResult(row: Record<string, unknown>): FlightSearchResult {
   return result;
 }
 
-export function getAllQueries(userId?: number) {
-  const conditions: string[] = [`q.created_at >= datetime('now', '-' || ${CACHE_VISIBLE_DAYS} || ' days')`];
+export async function getAllQueries(userId?: number) {
+  const conditions: string[] = [`q.created_at::timestamptz >= NOW() - INTERVAL '1 day' * ${CACHE_VISIBLE_DAYS}`];
   const params: unknown[] = [];
+  let paramIdx = 1;
+
   if (userId != null) {
-    conditions.push('q.user_id = ?');
+    conditions.push(`q.user_id = $${paramIdx}`);
     params.push(userId);
+    paramIdx++;
   }
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  return db.prepare(`
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+  const { rows } = await pool.query(`
     SELECT q.*, COUNT(r.id) AS result_count
     FROM queries q
     LEFT JOIN results r ON r.query_id = q.id
     ${where}
     GROUP BY q.id
     ORDER BY q.created_at DESC
-  `).all(...params) as Array<{
+  `, params);
+
+  return rows as Array<{
     id: number;
     origin: string;
     destination: string;
@@ -154,8 +125,8 @@ export function getAllQueries(userId?: number) {
   }>;
 }
 
-export function getResultsByQueryId(queryId: number): FlightSearchResult[] {
-  const rows = db.prepare('SELECT * FROM results WHERE query_id = ?').all(queryId) as Array<Record<string, unknown>>;
+export async function getResultsByQueryId(queryId: number): Promise<FlightSearchResult[]> {
+  const { rows } = await pool.query('SELECT * FROM results WHERE query_id = $1', [queryId]);
   return rows.map(mapRowToResult);
 }
 
@@ -168,35 +139,37 @@ export interface CacheSearchFilters {
   cabin?: string;
 }
 
-export function searchCachedResults(filters: CacheSearchFilters, userId?: number, includeLegacy = false) {
-  const conditions: string[] = [`q.created_at >= datetime('now', '-' || ${CACHE_VISIBLE_DAYS} || ' days')`];
+export async function searchCachedResults(filters: CacheSearchFilters, userId?: number, includeLegacy = false) {
+  const conditions: string[] = [`q.created_at::timestamptz >= NOW() - INTERVAL '1 day' * ${CACHE_VISIBLE_DAYS}`];
   const params: unknown[] = [];
+  let paramIdx = 1;
 
   if (userId != null) {
     if (includeLegacy) {
-      conditions.push('(q.user_id = ? OR q.user_id IS NULL)');
+      conditions.push(`(q.user_id = $${paramIdx} OR q.user_id IS NULL)`);
     } else {
-      conditions.push('q.user_id = ?');
+      conditions.push(`q.user_id = $${paramIdx}`);
     }
     params.push(userId);
+    paramIdx++;
   }
   if (filters.origins && filters.origins.length > 0) {
-    const placeholders = filters.origins.map(() => '?').join(',');
+    const placeholders = filters.origins.map(() => `$${paramIdx++}`).join(',');
     conditions.push(`UPPER(r.origin) IN (${placeholders})`);
     params.push(...filters.origins.map((o) => o.toUpperCase().trim()));
   }
   if (filters.destinations && filters.destinations.length > 0) {
-    const placeholders = filters.destinations.map(() => '?').join(',');
+    const placeholders = filters.destinations.map(() => `$${paramIdx++}`).join(',');
     conditions.push(`UPPER(r.destination) IN (${placeholders})`);
     params.push(...filters.destinations.map((d) => d.toUpperCase().trim()));
   }
   if (filters.departureDates && filters.departureDates.length > 0) {
-    const dateConds = filters.departureDates.map(() => 'r.departure_at LIKE ?');
+    const dateConds = filters.departureDates.map(() => `r.departure_at LIKE $${paramIdx++}`);
     conditions.push(`(${dateConds.join(' OR ')})`);
     params.push(...filters.departureDates.map((d) => `${d}%`));
   }
   if (filters.cabin) {
-    conditions.push('LOWER(r.cabin) = LOWER(?)');
+    conditions.push(`LOWER(r.cabin) = LOWER($${paramIdx++})`);
     params.push(filters.cabin);
   }
   if (filters.tripType === 'oneway') {
@@ -206,111 +179,131 @@ export function searchCachedResults(filters: CacheSearchFilters, userId?: number
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const limit = filters.limit && filters.limit > 0 ? `LIMIT ${filters.limit}` : 'LIMIT 500';
+  const limit = filters.limit && filters.limit > 0 ? filters.limit : 500;
 
-  const rows = db.prepare(`
+  const { rows } = await pool.query(`
     SELECT r.*, q.departure_date AS query_departure_date, q.return_date AS query_return_date,
            q.adults AS query_adults, q.currency AS query_currency, q.created_at AS query_cached_at
     FROM results r
     JOIN queries q ON q.id = r.query_id
     ${where}
     ORDER BY r.total_price ASC
-    ${limit}
-  `).all(...params) as Array<Record<string, unknown>>;
+    LIMIT $${paramIdx}
+  `, [...params, limit]);
 
-  return rows.map((row) => ({
+  return rows.map((row: Record<string, unknown>) => ({
     ...mapRowToResult(row),
     queryCachedAt: row.query_cached_at as string,
   }));
 }
 
-export const cacheResults = db.transaction((params: FlightSearchParams, results: FlightSearchResult[], timeSweepId?: string, userId?: number) => {
+export async function cacheResults(params: FlightSearchParams, results: FlightSearchResult[], timeSweepId?: string, userId?: number): Promise<void> {
   const key = buildCacheKey(params);
+  const client = await pool.connect();
 
-  // Delete old cached entry if it exists (for fresh refreshes)
-  const existing = db.prepare('SELECT id FROM queries WHERE cache_key = ?').get(key) as { id: number } | undefined;
-  if (existing) {
-    db.prepare('DELETE FROM queries WHERE id = ?').run(existing.id);
-  }
+  try {
+    await client.query('BEGIN');
 
-  const info = db.prepare(`
-    INSERT INTO queries (origin, destination, departure_date, return_date, adults, non_stop, currency, cache_key, created_at, time_sweep_id, user_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    params.origin.toUpperCase().trim(),
-    params.destination.toUpperCase().trim(),
-    params.departureDate,
-    params.returnDate || null,
-    params.adults,
-    params.nonStop ? 1 : 0,
-    (params.currency || 'USD').toUpperCase(),
-    key,
-    new Date().toISOString(),
-    timeSweepId || null,
-    userId || null,
-  );
+    // Delete old cached entry if it exists
+    const { rows: existing } = await client.query('SELECT id FROM queries WHERE cache_key = $1', [key]);
+    if (existing.length > 0) {
+      await client.query('DELETE FROM queries WHERE id = $1', [existing[0].id]);
+    }
 
-  const queryId = info.lastInsertRowid;
-
-  const insertResult = db.prepare(`
-    INSERT INTO results (
-      query_id, offer_id, airline_code, airline_name, flight_number,
-      origin, destination, departure_at, arrival_at, duration,
-      stops, stop_codes, total_price, price_per_person, currency, cabin,
-      return_departure_at, return_arrival_at, return_duration, return_stops,
-      return_flight_number, return_origin, return_destination, return_stop_codes,
-      segments_json, return_segments_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  for (const r of results) {
-    insertResult.run(
-      queryId,
-      r.id,
-      r.airlineCode,
-      r.airlineName,
-      r.flightNumber,
-      r.origin,
-      r.destination,
-      r.departureAt,
-      r.arrivalAt,
-      r.duration,
-      r.stops,
-      JSON.stringify(r.stopCodes),
-      r.totalPrice,
-      r.pricePerPerson,
-      r.currency,
-      r.cabin,
-      r.returnDepartureAt || null,
-      r.returnArrivalAt || null,
-      r.returnDuration || null,
-      r.returnStops ?? null,
-      r.returnFlightNumber || null,
-      r.returnOrigin || null,
-      r.returnDestination || null,
-      r.returnStopCodes ? JSON.stringify(r.returnStopCodes) : null,
-      JSON.stringify(r.segments),
-      r.returnSegments ? JSON.stringify(r.returnSegments) : null,
+    const { rows: insertRows } = await client.query(
+      `INSERT INTO queries (origin, destination, departure_date, return_date, adults, non_stop, currency, cache_key, created_at, time_sweep_id, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+      [
+        params.origin.toUpperCase().trim(),
+        params.destination.toUpperCase().trim(),
+        params.departureDate,
+        params.returnDate || null,
+        params.adults,
+        params.nonStop ? 1 : 0,
+        (params.currency || 'USD').toUpperCase(),
+        key,
+        new Date().toISOString(),
+        timeSweepId || null,
+        userId || null,
+      ]
     );
-  }
-});
 
-export function getTimeSweepResults(timeSweepId: string, userId?: number) {
-  const conditions = ['q.time_sweep_id = ?', `q.created_at >= datetime('now', '-' || ${CACHE_VISIBLE_DAYS} || ' days')`];
+    const queryId = insertRows[0].id;
+
+    for (const r of results) {
+      await client.query(
+        `INSERT INTO results (
+          query_id, offer_id, airline_code, airline_name, flight_number,
+          origin, destination, departure_at, arrival_at, duration,
+          stops, stop_codes, total_price, price_per_person, currency, cabin,
+          return_departure_at, return_arrival_at, return_duration, return_stops,
+          return_flight_number, return_origin, return_destination, return_stop_codes,
+          segments_json, return_segments_json
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`,
+        [
+          queryId,
+          r.id,
+          r.airlineCode,
+          r.airlineName,
+          r.flightNumber,
+          r.origin,
+          r.destination,
+          r.departureAt,
+          r.arrivalAt,
+          r.duration,
+          r.stops,
+          JSON.stringify(r.stopCodes),
+          r.totalPrice,
+          r.pricePerPerson,
+          r.currency,
+          r.cabin,
+          r.returnDepartureAt || null,
+          r.returnArrivalAt || null,
+          r.returnDuration || null,
+          r.returnStops ?? null,
+          r.returnFlightNumber || null,
+          r.returnOrigin || null,
+          r.returnDestination || null,
+          r.returnStopCodes ? JSON.stringify(r.returnStopCodes) : null,
+          JSON.stringify(r.segments),
+          r.returnSegments ? JSON.stringify(r.returnSegments) : null,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    // Invalidate Redis cache for this key so next read gets fresh data
+    await deleteFromRedis(key);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getTimeSweepResults(timeSweepId: string, userId?: number) {
+  const conditions = [
+    'q.time_sweep_id = $1',
+    `q.created_at::timestamptz >= NOW() - INTERVAL '1 day' * ${CACHE_VISIBLE_DAYS}`,
+  ];
   const params: unknown[] = [timeSweepId];
+
   if (userId != null) {
-    conditions.push('q.user_id = ?');
+    conditions.push('q.user_id = $2');
     params.push(userId);
   }
-  const rows = db.prepare(`
+
+  const { rows } = await pool.query(`
     SELECT r.*, q.departure_date, q.created_at AS query_cached_at
     FROM results r
     JOIN queries q ON q.id = r.query_id
     WHERE ${conditions.join(' AND ')}
     ORDER BY q.departure_date ASC, r.total_price ASC
-  `).all(...params) as Array<Record<string, unknown>>;
+  `, params);
 
-  return rows.map((row) => ({
+  return rows.map((row: Record<string, unknown>) => ({
     ...mapRowToResult(row),
     departureDate: row.departure_date as string,
   }));

@@ -19,12 +19,21 @@
 
 ## UI Layout
 
-App
+App-when not logged in
+├── Google Log in Button
+├── Demo page
+---├── FAQs
+---├── Use Cases
+
+App-once logged in
 ├── Left Hand Panel: Search Query (1)
 ├── Right Hand:
 ---├── Top: Filter results (2)
 ---├── Bottom: Results tabs (3)
 ├── User tab (4)
+---├── Settings page
+---├── Account page
+---├── Access to other info pages FAQs / use-cases etc
 ├── Admin tab (5) - hidden
 
 ## Search Query (1)
@@ -104,12 +113,23 @@ Origins on rows, desintations on columns, minimum price for given filters. Click
 - Tracks key metrics about the site usage
   - Number of users
   - Revenue (filter out test transactions)
+  - Total API calls this month (indicate if this is local / production)
   - Top 10 most active users
   - Query count by day (equivalent to API calls per day)
   - Size of cache DB
   - Failed log in attempts (perhaps because PUBLIC=FALSE has been set)
+  - Failed searches (API issue)
+  - Count of searches that were successful but had no flights - perphaps a list of top 10 routes so I can manually check them
 
 ## Growth strategy
+
+**Trust**
+
+- It is paramount that the user is not charged credits for failed searches, these searches should get tagged
+- Data is secure, people cannot abuse the system
+- Bugs are dealt with swiftly, we leverage a community of admins to help.
+
+## Scaling strategy
 
 **Visisibility**
 

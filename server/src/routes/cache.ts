@@ -1,40 +1,41 @@
 import { Router } from 'express';
 import { getAllQueries, getResultsByQueryId, searchCachedResults, getTimeSweepResults, checkCachedKeys } from '../services/cacheService.js';
+import logger from '../services/logger.js';
 
 export const cacheRouter = Router();
 
 // Check which O/D/date combos are cached
-cacheRouter.post('/check', (req, res) => {
+cacheRouter.post('/check', async (req, res) => {
   try {
     const { combos } = req.body as { combos: Array<{ origin: string; destination: string; departureDate: string; adults: number; currency?: string; cabin?: string }> };
     if (!Array.isArray(combos)) {
       res.status(400).json({ error: 'combos must be an array' });
       return;
     }
-    const results = checkCachedKeys(combos);
+    const results = await checkCachedKeys(combos);
     res.json({ cached: results });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Cache check error:', message);
+    logger.error({ err }, 'Cache check error');
     res.status(500).json({ error: message });
   }
 });
 
-cacheRouter.get('/queries', (req, res) => {
+cacheRouter.get('/queries', async (req, res) => {
   try {
     // Admin can pass ?all=true to see all users' queries
     const showAll = req.query.all === 'true' && req.user?.is_admin === 1;
     const userId = showAll ? undefined : req.user!.id;
-    const queries = getAllQueries(userId);
+    const queries = await getAllQueries(userId);
     res.json({ queries });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Cache queries error:', message);
+    logger.error({ err }, 'Cache queries error');
     res.status(500).json({ error: message });
   }
 });
 
-cacheRouter.get('/search', (req, res) => {
+cacheRouter.get('/search', async (req, res) => {
   try {
     const origins = req.query.origin ? (req.query.origin as string).split(',').filter(Boolean) : undefined;
     const destinations = req.query.destination ? (req.query.destination as string).split(',').filter(Boolean) : undefined;
@@ -48,16 +49,16 @@ cacheRouter.get('/search', (req, res) => {
     const isAdmin = req.user?.is_admin === 1;
     const userId = (wantsAll && isAdmin) ? undefined : req.user!.id;
     const includeLegacy = wantsAll;
-    const results = searchCachedResults({ origins, destinations, departureDates, tripType, limit, cabin }, userId, includeLegacy);
+    const results = await searchCachedResults({ origins, destinations, departureDates, tripType, limit, cabin }, userId, includeLegacy);
     res.json({ results });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Cache search error:', message);
+    logger.error({ err }, 'Cache search error');
     res.status(500).json({ error: message });
   }
 });
 
-cacheRouter.get('/queries/:id/results', (req, res) => {
+cacheRouter.get('/queries/:id/results', async (req, res) => {
   try {
     const queryId = Number(req.params.id);
     if (isNaN(queryId)) {
@@ -65,25 +66,25 @@ cacheRouter.get('/queries/:id/results', (req, res) => {
       return;
     }
 
-    const results = getResultsByQueryId(queryId);
+    const results = await getResultsByQueryId(queryId);
     res.json({ results });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Cache results error:', message);
+    logger.error({ err }, 'Cache results error');
     res.status(500).json({ error: message });
   }
 });
 
-cacheRouter.get('/time-sweep/:id', (req, res) => {
+cacheRouter.get('/time-sweep/:id', async (req, res) => {
   try {
     const timeSweepId = req.params.id;
     const showAll = req.query.all === 'true' && req.user?.is_admin === 1;
     const userId = showAll ? undefined : req.user!.id;
-    const results = getTimeSweepResults(timeSweepId, userId);
+    const results = await getTimeSweepResults(timeSweepId, userId);
     res.json({ results });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Time sweep results error:', message);
+    logger.error({ err }, 'Time sweep results error');
     res.status(500).json({ error: message });
   }
 });

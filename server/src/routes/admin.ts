@@ -7,8 +7,8 @@ export const adminRouter = Router();
 // All admin routes require admin access
 adminRouter.use(requireAdmin);
 
-adminRouter.get('/stats', (_req, res) => {
-  const stats = getAdminStats();
+adminRouter.get('/stats', async (_req, res) => {
+  const stats = await getAdminStats();
   res.json(stats);
 });
 
@@ -16,7 +16,7 @@ adminRouter.get('/config', (_req, res) => {
   res.json({ cacheAgeDays: CACHE_AGE_DAYS, cacheVisibleDays: CACHE_VISIBLE_DAYS });
 });
 
-adminRouter.post('/evict-cache', (_req, res) => {
-  const deleted = evictOldCache();
+adminRouter.post('/evict-cache', async (_req, res) => {
+  const deleted = await evictOldCache();
   res.json({ deleted, message: `Evicted ${deleted} queries older than ${CACHE_AGE_DAYS} days` });
 });

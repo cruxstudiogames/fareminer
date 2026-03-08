@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { OAuth2Client } from 'google-auth-library';
 import { findOrCreateUser, getUserById, updateUserPreferences, type User } from '../services/userService.js';
+import logger from '../services/logger.js';
 
 export const authRouter = Router();
 
@@ -59,7 +60,7 @@ authRouter.post('/google', async (req, res) => {
       return;
     }
 
-    const user = findOrCreateUser(
+    const user = await findOrCreateUser(
       payload.sub,
       payload.email,
       payload.name || payload.email,
@@ -70,18 +71,18 @@ authRouter.post('/google', async (req, res) => {
 
     res.json({ user: toUserResponse(user) });
   } catch (err) {
-    console.error('Google auth error:', err);
+    logger.error({ err }, 'Google auth error');
     res.status(401).json({ error: 'Authentication failed' });
   }
 });
 
-authRouter.get('/me', (req, res) => {
+authRouter.get('/me', async (req, res) => {
   if (!req.session.userId) {
     res.status(401).json({ error: 'Not authenticated' });
     return;
   }
 
-  const user = getUserById(req.session.userId);
+  const user = await getUserById(req.session.userId);
   if (!user) {
     req.session.destroy(() => {});
     res.status(401).json({ error: 'User not found' });
@@ -91,7 +92,7 @@ authRouter.get('/me', (req, res) => {
   res.json({ user: toUserResponse(user) });
 });
 
-authRouter.patch('/preferences', (req, res) => {
+authRouter.patch('/preferences', async (req, res) => {
   if (!req.session.userId) {
     res.status(401).json({ error: 'Not authenticated' });
     return;
@@ -99,12 +100,12 @@ authRouter.patch('/preferences', (req, res) => {
 
   const { homePort, defaultCurrency } = req.body as { homePort?: string; defaultCurrency?: string };
 
-  updateUserPreferences(req.session.userId, {
+  await updateUserPreferences(req.session.userId, {
     home_port: homePort !== undefined ? (homePort || null) : undefined,
     default_currency: defaultCurrency !== undefined ? (defaultCurrency || null) : undefined,
   });
 
-  const user = getUserById(req.session.userId);
+  const user = await getUserById(req.session.userId);
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;

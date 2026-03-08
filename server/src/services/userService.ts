@@ -1,4 +1,4 @@
-import db from './database.js';
+import pool from './database.js';
 
 export type UserRole = 'owner' | 'admin' | 'user';
 
@@ -31,35 +31,40 @@ function determineRole(email: string): UserRole {
 }
 
 function getCurrentMonth(): string {
-  return new Date().toISOString().slice(0, 7); // e.g. "2026-03"
+  return new Date().toISOString().slice(0, 7);
 }
 
-function grantAdminMonthlyCredits(userId: number, currentMonth: string): void {
-  db.prepare('UPDATE users SET credits = ?, admin_credits_month = ? WHERE id = ?')
-    .run(ADMIN_MONTHLY_CREDITS, currentMonth, userId);
+async function grantAdminMonthlyCredits(userId: number, currentMonth: string): Promise<void> {
+  await pool.query(
+    'UPDATE users SET credits = $1, admin_credits_month = $2 WHERE id = $3',
+    [ADMIN_MONTHLY_CREDITS, currentMonth, userId]
+  );
 
-  db.prepare(
-    'INSERT INTO credit_transactions (user_id, amount, type, description, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(userId, ADMIN_MONTHLY_CREDITS, 'admin_monthly', `Monthly admin credits for ${currentMonth}`, new Date().toISOString());
+  await pool.query(
+    'INSERT INTO credit_transactions (user_id, amount, type, description, created_at) VALUES ($1, $2, $3, $4, $5)',
+    [userId, ADMIN_MONTHLY_CREDITS, 'admin_monthly', `Monthly admin credits for ${currentMonth}`, new Date().toISOString()]
+  );
 }
 
-export function findOrCreateUser(googleId: string, email: string, name: string, picture?: string): User {
-  const existing = db.prepare('SELECT * FROM users WHERE google_id = ?').get(googleId) as User | undefined;
+export async function findOrCreateUser(googleId: string, email: string, name: string, picture?: string): Promise<User> {
+  const { rows } = await pool.query('SELECT * FROM users WHERE google_id = $1', [googleId]);
+  const existing = rows[0] as User | undefined;
   const now = new Date().toISOString();
   const role = determineRole(email);
   const isAdmin = role === 'owner' || role === 'admin' ? 1 : 0;
 
   if (existing) {
-    db.prepare('UPDATE users SET name = ?, picture = ?, last_login = ?, role = ?, is_admin = ? WHERE id = ?')
-      .run(name, picture ?? null, now, role, isAdmin, existing.id);
+    await pool.query(
+      'UPDATE users SET name = $1, picture = $2, last_login = $3, role = $4, is_admin = $5 WHERE id = $6',
+      [name, picture ?? null, now, role, isAdmin, existing.id]
+    );
 
     const user = { ...existing, name, picture: picture ?? null, last_login: now, role, is_admin: isAdmin };
 
-    // Grant admin monthly credits if not yet granted this month
     if (role === 'admin') {
       const currentMonth = getCurrentMonth();
       if (user.admin_credits_month !== currentMonth) {
-        grantAdminMonthlyCredits(user.id, currentMonth);
+        await grantAdminMonthlyCredits(user.id, currentMonth);
         user.credits = ADMIN_MONTHLY_CREDITS;
         user.admin_credits_month = currentMonth;
       }
@@ -68,17 +73,17 @@ export function findOrCreateUser(googleId: string, email: string, name: string, 
     return user;
   }
 
-  const info = db.prepare(
-    'INSERT INTO users (google_id, email, name, picture, is_admin, role, created_at, last_login) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(googleId, email, name, picture ?? null, isAdmin, role, now, now);
+  const { rows: insertRows } = await pool.query(
+    'INSERT INTO users (google_id, email, name, picture, is_admin, role, created_at, last_login) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+    [googleId, email, name, picture ?? null, isAdmin, role, now, now]
+  );
 
-  const userId = Number(info.lastInsertRowid);
+  const userId = insertRows[0].id as number;
   let credits = 0;
 
-  // Grant admin monthly credits on first login
   if (role === 'admin') {
     const currentMonth = getCurrentMonth();
-    grantAdminMonthlyCredits(userId, currentMonth);
+    await grantAdminMonthlyCredits(userId, currentMonth);
     credits = ADMIN_MONTHLY_CREDITS;
   }
 
@@ -99,15 +104,16 @@ export function findOrCreateUser(googleId: string, email: string, name: string, 
   };
 }
 
-export function getUserById(id: number): User | undefined {
-  return db.prepare('SELECT * FROM users WHERE id = ?').get(id) as User | undefined;
+export async function getUserById(id: number): Promise<User | undefined> {
+  const { rows } = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+  return rows[0] as User | undefined;
 }
 
-export function updateUserPreferences(id: number, prefs: { home_port?: string | null; default_currency?: string | null }): void {
+export async function updateUserPreferences(id: number, prefs: { home_port?: string | null; default_currency?: string | null }): Promise<void> {
   if (prefs.home_port !== undefined) {
-    db.prepare('UPDATE users SET home_port = ? WHERE id = ?').run(prefs.home_port || null, id);
+    await pool.query('UPDATE users SET home_port = $1 WHERE id = $2', [prefs.home_port || null, id]);
   }
   if (prefs.default_currency !== undefined) {
-    db.prepare('UPDATE users SET default_currency = ? WHERE id = ?').run(prefs.default_currency || null, id);
+    await pool.query('UPDATE users SET default_currency = $1 WHERE id = $2', [prefs.default_currency || null, id]);
   }
 }
