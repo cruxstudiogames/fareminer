@@ -13,6 +13,8 @@ import { flightsRouter } from './routes/flights.js';
 import { cacheRouter } from './routes/cache.js';
 import { tripsRouter } from './routes/trips.js';
 import { creditsRouter, createWebhookHandler } from './routes/credits.js';
+import { adminRouter } from './routes/admin.js';
+import { evictOldCache } from './services/adminService.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -57,6 +59,7 @@ app.use('/api/flights', requireAuth, flightsRouter);
 app.use('/api/cache', requireAuth, cacheRouter);
 app.use('/api/trips', requireAuth, tripsRouter);
 app.use('/api/credits', requireAuth, creditsRouter);
+app.use('/api/admin', requireAuth, adminRouter);
 
 // In production, serve the React client build
 if (isProd) {
@@ -67,6 +70,10 @@ if (isProd) {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }
+
+// Evict expired cache entries on startup
+const evicted = evictOldCache();
+if (evicted > 0) console.log(`Cache eviction: removed ${evicted} queries older than configured limit`);
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

@@ -1,6 +1,8 @@
 import db from './database.js';
 import type { FlightSearchParams, FlightSearchResult, FlightSegment } from './flightService.js';
 
+const CACHE_VISIBLE_DAYS = parseInt(process.env.CACHE_VISIBLE_DAYS || '7', 10);
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS queries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,19 +66,23 @@ function buildCacheKey(params: FlightSearchParams): string {
   ].join('|');
 }
 
-/** Check which cache keys exist from a list of search param combos */
+/** Check which cache keys exist from a list of search param combos (within visible window) */
 export function checkCachedKeys(combos: FlightSearchParams[]): boolean[] {
-  const stmt = db.prepare('SELECT 1 FROM queries WHERE cache_key = ?');
+  const stmt = db.prepare(
+    "SELECT 1 FROM queries WHERE cache_key = ? AND created_at >= datetime('now', '-' || ? || ' days')"
+  );
   return combos.map((params) => {
     const key = buildCacheKey(params);
-    return stmt.get(key) !== undefined;
+    return stmt.get(key, CACHE_VISIBLE_DAYS) !== undefined;
   });
 }
 
 export function getCachedResults(params: FlightSearchParams): FlightSearchResult[] | null {
   const key = buildCacheKey(params);
 
-  const query = db.prepare('SELECT id FROM queries WHERE cache_key = ?').get(key) as { id: number } | undefined;
+  const query = db.prepare(
+    "SELECT id FROM queries WHERE cache_key = ? AND created_at >= datetime('now', '-' || ? || ' days')"
+  ).get(key, CACHE_VISIBLE_DAYS) as { id: number } | undefined;
   if (!query) return null;
 
   const rows = db.prepare('SELECT * FROM results WHERE query_id = ?').all(query.id) as Array<Record<string, unknown>>;
@@ -119,8 +125,13 @@ function mapRowToResult(row: Record<string, unknown>): FlightSearchResult {
 }
 
 export function getAllQueries(userId?: number) {
-  const where = userId != null ? 'WHERE q.user_id = ?' : '';
-  const params = userId != null ? [userId] : [];
+  const conditions: string[] = [`q.created_at >= datetime('now', '-' || ${CACHE_VISIBLE_DAYS} || ' days')`];
+  const params: unknown[] = [];
+  if (userId != null) {
+    conditions.push('q.user_id = ?');
+    params.push(userId);
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   return db.prepare(`
     SELECT q.*, COUNT(r.id) AS result_count
     FROM queries q
@@ -158,7 +169,7 @@ export interface CacheSearchFilters {
 }
 
 export function searchCachedResults(filters: CacheSearchFilters, userId?: number, includeLegacy = false) {
-  const conditions: string[] = [];
+  const conditions: string[] = [`q.created_at >= datetime('now', '-' || ${CACHE_VISIBLE_DAYS} || ' days')`];
   const params: unknown[] = [];
 
   if (userId != null) {
@@ -285,7 +296,7 @@ export const cacheResults = db.transaction((params: FlightSearchParams, results:
 });
 
 export function getTimeSweepResults(timeSweepId: string, userId?: number) {
-  const conditions = ['q.time_sweep_id = ?'];
+  const conditions = ['q.time_sweep_id = ?', `q.created_at >= datetime('now', '-' || ${CACHE_VISIBLE_DAYS} || ' days')`];
   const params: unknown[] = [timeSweepId];
   if (userId != null) {
     conditions.push('q.user_id = ?');

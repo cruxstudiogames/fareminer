@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { Plane, LogOut, Coins, Settings } from 'lucide-react';
+import { Plane, LogOut, Coins, Settings, Shield } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { logout, updatePreferences } from '../../services/authService';
 import { purchaseCredits } from '../../services/creditService';
 import { AirportInput } from '../flights/AirportInput';
 
-export function Header() {
+export function Header({ adminOpen, onToggleAdmin }: { adminOpen?: boolean; onToggleAdmin?: () => void }) {
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const [purchasing, setPurchasing] = useState(false);
@@ -77,6 +77,19 @@ export function Header() {
               }`}>
                 {user.role}
               </span>
+            )}
+            {(user.role === 'owner' || user.role === 'admin') && onToggleAdmin && (
+              <button
+                onClick={onToggleAdmin}
+                className={`flex items-center gap-1 text-xs px-1.5 py-1 rounded ${
+                  adminOpen
+                    ? 'text-purple-700 bg-purple-50'
+                    : 'text-gray-400 hover:text-purple-700 hover:bg-purple-50'
+                }`}
+                title="Admin Dashboard"
+              >
+                <Shield className="w-3.5 h-3.5" />
+              </button>
             )}
             <button
               onClick={() => setSettingsOpen(!settingsOpen)}

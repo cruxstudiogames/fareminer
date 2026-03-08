@@ -25,6 +25,7 @@ App
 ---├── Top: Filter results (2)
 ---├── Bottom: Results tabs (3)
 ├── User tab (4)
+├── Admin tab (5) - hidden
 
 ## Search Query (1)
 
@@ -96,6 +97,47 @@ Origins on rows, desintations on columns, minimum price for given filters. Click
 ## User tab (4)
 
 - User can select default currency and home port
+
+## Admin Tab (5)
+
+- A hidden tab from the general user, visible to owner / admins
+- Tracks key metrics about the site usage
+  - Number of users
+  - Revenue (filter out test transactions)
+  - Top 10 most active users
+  - Query count by day (equivalent to API calls per day)
+  - Size of cache DB
+  - Failed log in attempts (perhaps because PUBLIC=FALSE has been set)
+
+## Growth strategy
+
+**Visisibility**
+
+- Admin dashboard with key stats
+- Cacheeviction
+  - Have a parameter `cache_age_days` that limits how many days cached items float around for. Set to 28 days to start with.
+  - Have a parameter `cache_visible_days` that limits how many days the cache is visible for. Set to 7 days to start with.
+
+**Reliability**
+
+- Cache needs concurrent writes, connection pooling and horizontal scaling
+- HotCache to serve up results for top 20 routes super fast
+- Structured logging for debuggin
+- Sentry for error tracking
+- Versioning - show the commit hash from github on the site in the footer
+- Updating code can never wipe or alter the cache
+
+**Scale**
+
+- Rate limiting per user (not just per IP)
+- Queue system for handling concurrency of API calls
+- Database read replicas
+- CDN for frontend assets (Cloudflare, Vercel)
+
+**Security**
+
+- No `.env` variables in github
+- Cache is not shared between local <-> github <-> railway
 
 ## Limitations
 

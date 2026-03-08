@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { Header } from './components/layout/Header';
 import { FlightSearchPage } from './components/flights/FlightSearchPage';
+import { AdminDashboard } from './components/admin/AdminDashboard';
 import { LoginPage } from './components/auth/LoginPage';
 import { useAuthStore } from './store/useAuthStore';
 import { fetchCurrentUser } from './services/authService';
@@ -11,8 +12,9 @@ import { Loader2 } from 'lucide-react';
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 export default function App() {
-  const { isAuthenticated, isLoading } = useAuthStore();
+  const { isAuthenticated, isLoading, isAdmin } = useAuthStore();
   const setUser = useAuthStore((s) => s.setUser);
+  const [adminOpen, setAdminOpen] = useState(false);
 
   useEffect(() => {
     fetchCurrentUser()
@@ -56,8 +58,11 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
-      <Header />
-      <FlightSearchPage />
+      <Header
+        adminOpen={adminOpen}
+        onToggleAdmin={isAdmin ? () => setAdminOpen(!adminOpen) : undefined}
+      />
+      {adminOpen && isAdmin ? <AdminDashboard /> : <FlightSearchPage />}
     </div>
   );
 }
