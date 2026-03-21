@@ -106,7 +106,10 @@ export function generateDatesInRange(
   while (start <= endDate) {
     const dow = start.getDay();
     if (daysOfWeek.length === 0 || daysOfWeek.includes(dow)) {
-      dates.push(start.toISOString().split('T')[0]);
+      const y = start.getFullYear();
+      const m = String(start.getMonth() + 1).padStart(2, '0');
+      const d = String(start.getDate()).padStart(2, '0');
+      dates.push(`${y}-${m}-${d}`);
     }
     start.setDate(start.getDate() + 1);
   }
