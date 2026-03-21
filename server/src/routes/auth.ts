@@ -71,8 +71,9 @@ authRouter.post('/google', async (req, res) => {
 
     res.json({ user: toUserResponse(user) });
   } catch (err) {
-    logger.error({ err }, 'Google auth error');
-    res.status(401).json({ error: 'Authentication failed' });
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    logger.error({ err, message }, 'Google auth error');
+    res.status(401).json({ error: 'Authentication failed', detail: message });
   }
 });
 

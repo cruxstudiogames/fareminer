@@ -19,8 +19,8 @@ export async function loginWithGoogle(credential: string): Promise<AuthUser> {
   });
 
   if (!response.ok) {
-    const data = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error || 'Login failed');
+    const data = (await response.json().catch(() => ({}))) as { error?: string; detail?: string };
+    throw new Error(data.detail || data.error || 'Login failed');
   }
 
   const data = (await response.json()) as { user: AuthUser };
