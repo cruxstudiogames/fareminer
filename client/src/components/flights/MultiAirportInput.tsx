@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { X } from 'lucide-react';
+import { X, Copy, Check } from 'lucide-react';
 import { airports } from '../../data/airports';
 import { useRecentAirports } from './AirportInput';
 
@@ -120,6 +120,29 @@ export function MultiAirportInput({ codes, onChange, placeholder, disabled, colo
     }
   };
 
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const text = e.clipboardData.getData('text');
+    // Split on newlines, commas, spaces, tabs — extract 3-letter codes
+    const parsed = text
+      .split(/[\n\r,\s\t]+/)
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => /^[A-Z]{3}$/.test(s) && airports[s] && !codeSet.has(s));
+    if (parsed.length > 0) {
+      e.preventDefault();
+      const unique = [...new Set(parsed)];
+      onChange([...codes, ...unique.filter((c) => !codeSet.has(c))]);
+      unique.forEach(addRecent);
+      setQuery('');
+    }
+  };
+
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(codes.join('\n'));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   const showDropdown = open && focused && suggestions.length > 0;
 
   const chipBg = color === 'blue' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700';
@@ -167,11 +190,25 @@ export function MultiAirportInput({ codes, onChange, placeholder, disabled, colo
             setTimeout(() => setOpen(false), 150);
           }}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder={codes.length === 0 ? placeholder : ''}
           disabled={disabled}
           autoComplete="off"
           className="flex-1 min-w-[60px] outline-none text-sm bg-transparent py-0.5 uppercase placeholder:normal-case"
         />
+        {codes.length > 0 && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCopy();
+            }}
+            className="p-0.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 flex-shrink-0"
+            title="Copy airport codes"
+          >
+            {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+          </button>
+        )}
       </div>
 
       {showDropdown && (
