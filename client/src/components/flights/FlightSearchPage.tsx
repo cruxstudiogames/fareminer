@@ -78,7 +78,8 @@ export function FlightSearchPage() {
   const cacheStatus = useMemo(() => {
     if (!comboCacheInfo) return null;
     const cached = comboCacheInfo.filter((c) => c.cached).length;
-    return { cached, fresh: comboCacheInfo.length - cached };
+    const zeros = comboCacheInfo.filter((c: CacheCheckResult) => c.cached && c.resultCount === 0).length;
+    return { cached, fresh: comboCacheInfo.length - cached, zeros };
   }, [comboCacheInfo]);
 
   // Auto-select best default search mode when cache status changes
@@ -96,6 +97,7 @@ export function FlightSearchPage() {
   const searchCost = useMemo(() => {
     if (s.searchMode === 'cached') return 0;
     if (s.searchMode === 'fill') return cacheStatus?.fresh ?? searchCombos.length;
+    if (s.searchMode === 'zeros') return cacheStatus?.zeros ?? 0;
     return searchCombos.length; // refresh
   }, [s.searchMode, cacheStatus, searchCombos.length]);
 
@@ -141,7 +143,7 @@ export function FlightSearchPage() {
         });
         if (results.length === 0) set({ error: 'No cached results found.' });
       } else {
-        // Live search (refresh = all combos, fill = only new combos)
+        // Live search (refresh = all combos, fill = only new combos, zeros = only zero-result combos)
         const dates = generateDatesInRange(s.dateBegin, s.dateEnd, s.daysOfWeek);
         const combos: { origin: string; destination: string; date: string }[] = [];
         let comboIdx = 0;
@@ -154,6 +156,11 @@ export function FlightSearchPage() {
                 comboIdx++;
                 continue;
               }
+              // In zeros mode, only re-search combos that are cached with 0 results
+              if (s.searchMode === 'zeros' && !(comboCacheInfo?.[comboIdx]?.cached && comboCacheInfo?.[comboIdx]?.resultCount === 0)) {
+                comboIdx++;
+                continue;
+              }
               combos.push({ origin, destination, date });
               comboIdx++;
             }
@@ -162,7 +169,7 @@ export function FlightSearchPage() {
 
         // In fill mode, start by loading cached results
         const allResults: FlightSearchResult[] = [];
-        if (s.searchMode === 'fill') {
+        if (s.searchMode === 'fill' || s.searchMode === 'zeros') {
           try {
             const cachedResults = await searchCachedFlights({
               origins: s.origins,
@@ -442,6 +449,18 @@ export function FlightSearchPage() {
                     />
                     <span>Refresh all{!isOwner && <span className="text-amber-600 ml-1">({searchCombos.length} credits)</span>}</span>
                   </label>
+                  {cacheStatus.zeros > 0 && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="searchMode"
+                        checked={s.searchMode === 'zeros'}
+                        onChange={() => set({ searchMode: 'zeros' })}
+                        className="text-blue-600"
+                      />
+                      <span>Retry empty ({cacheStatus.zeros}){!isOwner && <span className="text-amber-600 ml-1">({cacheStatus.zeros} credits)</span>}</span>
+                    </label>
+                  )}
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="radio"

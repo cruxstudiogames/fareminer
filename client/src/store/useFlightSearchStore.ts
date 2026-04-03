@@ -64,7 +64,7 @@ const REGION_CURRENCY: Record<string, string> = {
 };
 
 export type ResultViewMode = 'build' | 'table' | 'time' | 'od' | 'map';
-export type SearchMode = 'cached' | 'fill' | 'refresh';
+export type SearchMode = 'cached' | 'fill' | 'refresh' | 'zeros';
 
 export interface SearchState {
   // Search query fields
