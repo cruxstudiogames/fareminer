@@ -1,6 +1,6 @@
 import { useMemo, useCallback, useRef, useEffect, useState } from 'react';
-import { Search, Loader2, Table2, Map as MapIcon, Grid3x3, AlertTriangle, BarChart3, List } from 'lucide-react';
-import { searchFlights, searchCachedFlights, generateDatesInRange, checkCachedCombos } from '../../services/flightService';
+import { Search, Loader2, Table2, Map as MapIcon, Grid3x3, BarChart3, List } from 'lucide-react';
+import { searchFlights, searchCachedFlights, generateDatesInRange, checkCachedCombos, type CacheCheckResult } from '../../services/flightService';
 import { FlightResultsTable } from './FlightResultsTable';
 import { FlightMap } from './FlightMap';
 import { ODMatrix } from './ODMatrix';
@@ -56,35 +56,48 @@ export function FlightSearchPage() {
     return combos;
   }, [s.origins, s.destinations, s.dateBegin, s.dateEnd, s.daysOfWeek, s.passengers, s.currency, s.cabin]);
 
-  // Check which combos are cached (per-combo boolean array)
-  const [comboCacheFlags, setComboCacheFlags] = useState<boolean[] | null>(null);
+  // Check which combos are cached (per-combo metadata)
+  const [comboCacheInfo, setComboCacheInfo] = useState<CacheCheckResult[] | null>(null);
   useEffect(() => {
     if (searchCombos.length === 0) {
-      setComboCacheFlags(null);
+      setComboCacheInfo(null);
       return;
     }
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
         const results = await checkCachedCombos(searchCombos);
-        if (!cancelled) setComboCacheFlags(results);
+        if (!cancelled) setComboCacheInfo(results);
       } catch {
-        if (!cancelled) setComboCacheFlags(null);
+        if (!cancelled) setComboCacheInfo(null);
       }
     }, 300); // debounce
     return () => { cancelled = true; clearTimeout(timer); };
   }, [searchCombos]);
 
   const cacheStatus = useMemo(() => {
-    if (!comboCacheFlags) return null;
-    const cached = comboCacheFlags.filter(Boolean).length;
-    return { cached, fresh: comboCacheFlags.length - cached };
-  }, [comboCacheFlags]);
+    if (!comboCacheInfo) return null;
+    const cached = comboCacheInfo.filter((c) => c.cached).length;
+    return { cached, fresh: comboCacheInfo.length - cached };
+  }, [comboCacheInfo]);
+
+  // Auto-select best default search mode when cache status changes
+  useEffect(() => {
+    if (!cacheStatus) return;
+    if (cacheStatus.fresh > 0 && cacheStatus.cached > 0) {
+      set({ searchMode: 'fill' });
+    } else if (cacheStatus.fresh === 0) {
+      set({ searchMode: 'cached' });
+    } else {
+      set({ searchMode: 'refresh' });
+    }
+  }, [cacheStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const searchCost = useMemo(() => {
-    if (!s.liveSearch) return 0;
-    return cacheStatus?.fresh ?? searchCombos.length;
-  }, [s.liveSearch, cacheStatus, searchCombos.length]);
+    if (s.searchMode === 'cached') return 0;
+    if (s.searchMode === 'fill') return cacheStatus?.fresh ?? searchCombos.length;
+    return searchCombos.length; // refresh
+  }, [s.searchMode, cacheStatus, searchCombos.length]);
 
   // Apply filters to results
   const filteredResults = useMemo(
@@ -105,15 +118,15 @@ export function FlightSearchPage() {
     }
 
     abortRef.current = false;
-    set({ error: '', results: [], loading: true, searchProgress: null, viewMode: 'table' });
+    set({ error: '', results: [], comboResults: new Map(), loading: true, searchProgress: null, viewMode: 'table' });
 
     // Add airports to recent
     for (const code of s.origins) addRecent(code);
     for (const code of s.destinations) addRecent(code);
 
     try {
-      if (!s.liveSearch) {
-        // Cache search
+      if (s.searchMode === 'cached') {
+        // Cache-only search
         const dates = generateDatesInRange(s.dateBegin, s.dateEnd, s.daysOfWeek);
         const results = await searchCachedFlights({
           origins: s.origins,
@@ -126,34 +139,63 @@ export function FlightSearchPage() {
           loading: false,
           searchProgress: null,
         });
-        if (results.length === 0) set({ error: 'No cached results found. Try a live search.' });
+        if (results.length === 0) set({ error: 'No cached results found.' });
       } else {
-        // Live search: iterate over all O/D/date combinations
+        // Live search (refresh = all combos, fill = only new combos)
         const dates = generateDatesInRange(s.dateBegin, s.dateEnd, s.daysOfWeek);
         const combos: { origin: string; destination: string; date: string }[] = [];
+        let comboIdx = 0;
         for (const origin of s.origins) {
           for (const destination of s.destinations) {
             if (origin === destination) continue;
             for (const date of dates) {
+              // In fill mode, skip combos that are already cached
+              if (s.searchMode === 'fill' && comboCacheInfo?.[comboIdx]?.cached) {
+                comboIdx++;
+                continue;
+              }
               combos.push({ origin, destination, date });
+              comboIdx++;
             }
           }
         }
 
+        // In fill mode, start by loading cached results
+        const allResults: FlightSearchResult[] = [];
+        if (s.searchMode === 'fill') {
+          try {
+            const cachedResults = await searchCachedFlights({
+              origins: s.origins,
+              destinations: s.destinations,
+              departureDates: dates,
+              cabin: s.cabin,
+            });
+            allResults.push(...(cachedResults as FlightSearchResult[]));
+            set({ results: [...allResults] });
+          } catch {
+            // Continue even if cache fetch fails
+          }
+        }
+
         if (combos.length === 0) {
-          set({ error: 'No valid search combinations. Check your origins, destinations, and dates.', loading: false });
+          if (allResults.length > 0) {
+            set({ results: allResults, loading: false, searchProgress: null });
+          } else {
+            set({ error: 'No valid search combinations. Check your origins, destinations, and dates.', loading: false });
+          }
           return;
         }
 
         set({ searchProgress: { completed: 0, total: combos.length } });
-        const allResults: FlightSearchResult[] = [];
         let completed = 0;
+        const comboResults: Map<string, number> = new Map();
 
         for (const combo of combos) {
           if (abortRef.current) {
             set({ error: `Search cancelled. ${allResults.length} results collected.`, loading: false, searchProgress: null });
             return;
           }
+          const comboKey = `${combo.origin}-${combo.destination}-${combo.date}`;
           try {
             const results = await searchFlights({
               origin: combo.origin,
@@ -164,31 +206,33 @@ export function FlightSearchPage() {
               cabin: s.cabin,
             });
             allResults.push(...results);
+            comboResults.set(comboKey, results.length);
           } catch (err) {
             const msg = err instanceof Error ? err.message : 'Search failed';
+            comboResults.set(comboKey, -1); // mark as failed
             if (msg.includes('INSUFFICIENT_CREDITS') || msg.includes('Insufficient credits')) {
               set({
                 results: allResults,
+                comboResults: new Map(comboResults),
                 error: `Ran out of credits after ${completed} searches. ${allResults.length} results collected.`,
                 loading: false,
                 searchProgress: null,
               });
               return;
             }
-            // Continue on individual search errors
-            console.warn(`Search failed for ${combo.origin}-${combo.destination} ${combo.date}:`, msg);
+            console.warn(`Search failed for ${comboKey}:`, msg);
           }
           completed++;
-          set({ results: [...allResults], searchProgress: { completed, total: combos.length } });
+          set({ results: [...allResults], comboResults: new Map(comboResults), searchProgress: { completed, total: combos.length } });
         }
 
-        set({ results: allResults, loading: false, searchProgress: null });
+        set({ results: allResults, comboResults: new Map(comboResults), loading: false, searchProgress: null });
         if (allResults.length === 0) set({ error: 'No flights found.' });
       }
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Search failed', loading: false, searchProgress: null });
     }
-  }, [s.origins, s.destinations, s.dateBegin, s.dateEnd, s.daysOfWeek, s.passengers, s.currency, s.cabin, s.liveSearch, set, addRecent]);
+  }, [s.origins, s.destinations, s.dateBegin, s.dateEnd, s.daysOfWeek, s.passengers, s.currency, s.cabin, s.searchMode, comboCacheInfo, set, addRecent]);
 
   const handleCancel = useCallback(() => {
     abortRef.current = true;
@@ -336,29 +380,44 @@ export function FlightSearchPage() {
               </select>
             </div>
 
-            {/* Live Search Toggle */}
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                <span className="font-medium">Live Search</span>
-                <input
-                  type="checkbox"
-                  checked={s.liveSearch}
-                  onChange={(e) => set({ liveSearch: e.target.checked })}
-                  className="rounded border-gray-300"
-                />
-              </label>
-            </div>
-
-            {/* Cache status & credit warning */}
+            {/* Search Mode */}
             {cacheStatus && searchCombos.length > 0 && (
-              <div className="p-2 bg-gray-100 border border-gray-200 rounded-md text-xs text-gray-600 space-y-1">
-                <div>{searchCombos.length} queries: <span className="text-green-600 font-medium">{cacheStatus.cached} cached</span>, <span className="text-amber-600 font-medium">{cacheStatus.fresh} new</span></div>
-                {s.liveSearch && cacheStatus.fresh > 0 && !isOwner && (
-                  <div className="flex items-center gap-1 text-amber-700">
-                    <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                    <span>Will use <strong>{cacheStatus.fresh}</strong> credit{cacheStatus.fresh !== 1 ? 's' : ''}</span>
-                  </div>
-                )}
+              <div className="p-2 bg-gray-100 border border-gray-200 rounded-md text-xs text-gray-600 space-y-1.5">
+                <div className="font-medium text-gray-700">{searchCombos.length} queries: <span className="text-green-600">{cacheStatus.cached} cached</span>, <span className="text-amber-600">{cacheStatus.fresh} new</span></div>
+                <div className="space-y-1">
+                  {cacheStatus.fresh > 0 && cacheStatus.cached > 0 && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="searchMode"
+                        checked={s.searchMode === 'fill'}
+                        onChange={() => set({ searchMode: 'fill' })}
+                        className="text-blue-600"
+                      />
+                      <span>Fill new queries{!isOwner && <span className="text-amber-600 ml-1">({cacheStatus.fresh} credits)</span>}</span>
+                    </label>
+                  )}
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="searchMode"
+                      checked={s.searchMode === 'refresh'}
+                      onChange={() => set({ searchMode: 'refresh' })}
+                      className="text-blue-600"
+                    />
+                    <span>Refresh all{!isOwner && <span className="text-amber-600 ml-1">({searchCombos.length} credits)</span>}</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="searchMode"
+                      checked={s.searchMode === 'cached'}
+                      onChange={() => set({ searchMode: 'cached' })}
+                      className="text-blue-600"
+                    />
+                    <span>Cached only{!isOwner && <span className="text-green-600 ml-1">(0 credits)</span>}</span>
+                  </label>
+                </div>
               </div>
             )}
           </div>
@@ -397,7 +456,7 @@ export function FlightSearchPage() {
               >
                 <Search className="w-4 h-4" />
                 Search
-                {s.liveSearch && !isOwner && searchCost > 0 && (
+                {s.searchMode !== 'cached' && !isOwner && searchCost > 0 && (
                   <span className="text-blue-200 text-xs">({searchCost} credits)</span>
                 )}
               </button>
@@ -480,7 +539,7 @@ export function FlightSearchPage() {
         {/* Content area */}
         <div className={`flex-1 ${s.viewMode === 'map' ? 'relative' : 'overflow-auto'}`}>
           {s.viewMode === 'build' && (
-            <QueryBuildTable combos={searchCombos} cacheFlags={comboCacheFlags} />
+            <QueryBuildTable combos={searchCombos} cacheInfo={comboCacheInfo} comboResults={s.comboResults} />
           )}
           {s.viewMode !== 'build' && s.results.length > 0 && (
             <>
@@ -515,9 +574,23 @@ export function FlightSearchPage() {
   );
 }
 
-function QueryBuildTable({ combos, cacheFlags }: {
+function formatCacheAge(cachedAt: string): string {
+  const d = new Date(cachedAt);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffH = Math.floor(diffMs / 3600000);
+  const diffD = Math.floor(diffH / 24);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const date = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (diffD === 0) return `today ${time}`;
+  if (diffD === 1) return `yesterday ${time}`;
+  return `${date} ${time}`;
+}
+
+function QueryBuildTable({ combos, cacheInfo, comboResults }: {
   combos: { origin: string; destination: string; departureDate: string; adults: number; currency?: string; cabin?: string }[];
-  cacheFlags: boolean[] | null;
+  cacheInfo: CacheCheckResult[] | null;
+  comboResults: Map<string, number>;
 }) {
   if (combos.length === 0) {
     return (
@@ -527,14 +600,14 @@ function QueryBuildTable({ combos, cacheFlags }: {
     );
   }
 
-  const cachedCount = cacheFlags ? cacheFlags.filter(Boolean).length : 0;
-  const freshCount = cacheFlags ? cacheFlags.length - cachedCount : combos.length;
+  const cachedCount = cacheInfo ? cacheInfo.filter((c) => c.cached).length : 0;
+  const freshCount = cacheInfo ? cacheInfo.length - cachedCount : combos.length;
 
   return (
     <div className="p-4">
       <div className="mb-3 text-xs text-gray-500">
         {combos.length} quer{combos.length !== 1 ? 'ies' : 'y'}:
-        {cacheFlags && (
+        {cacheInfo && (
           <>
             {' '}<span className="text-green-600 font-medium">{cachedCount} cached</span>,
             {' '}<span className="text-amber-600 font-medium">{freshCount} new</span>
@@ -550,26 +623,52 @@ function QueryBuildTable({ combos, cacheFlags }: {
             <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Date</th>
             <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Cabin</th>
             <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Status</th>
+            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Flights</th>
+            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Last Refreshed</th>
           </tr>
         </thead>
         <tbody>
           {combos.map((combo, i) => {
-            const isCached = cacheFlags?.[i] ?? false;
+            const info = cacheInfo?.[i];
+            const isCached = info?.cached ?? false;
+            const comboKey = `${combo.origin}-${combo.destination}-${combo.departureDate}`;
+            const resultCount = comboResults.get(comboKey);
+            const isFailed = resultCount === -1;
+            const isZero = resultCount === 0;
+            const rowBg = isFailed ? 'bg-red-50' : (isZero ? 'bg-amber-50' : '');
             return (
-              <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+              <tr key={i} className={`border-b border-gray-100 hover:bg-gray-50 ${rowBg}`}>
                 <td className="px-3 py-1.5 text-gray-400">{i + 1}</td>
                 <td className="px-3 py-1.5 font-mono">{combo.origin}</td>
                 <td className="px-3 py-1.5 font-mono">{combo.destination}</td>
                 <td className="px-3 py-1.5">{combo.departureDate}</td>
                 <td className="px-3 py-1.5">{combo.cabin || 'Economy'}</td>
                 <td className="px-3 py-1.5">
-                  {cacheFlags === null ? (
+                  {cacheInfo === null ? (
                     <span className="text-gray-400">checking...</span>
+                  ) : isFailed ? (
+                    <span className="text-red-600 font-medium">failed</span>
                   ) : isCached ? (
                     <span className="text-green-600 font-medium">cached</span>
+                  ) : resultCount !== undefined ? (
+                    <span className="text-green-600 font-medium">done</span>
                   ) : (
                     <span className="text-amber-600 font-medium">new</span>
                   )}
+                </td>
+                <td className="px-3 py-1.5">
+                  {isFailed ? (
+                    <span className="text-red-500">--</span>
+                  ) : resultCount !== undefined ? (
+                    <span className={isZero ? 'text-amber-600 font-medium' : ''}>{resultCount}</span>
+                  ) : info?.resultCount !== undefined ? (
+                    <span>{info.resultCount}</span>
+                  ) : (
+                    <span className="text-gray-300">--</span>
+                  )}
+                </td>
+                <td className="px-3 py-1.5 text-gray-400">
+                  {info?.cachedAt ? formatCacheAge(info.cachedAt) : '--'}
                 </td>
               </tr>
             );

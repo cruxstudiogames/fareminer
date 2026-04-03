@@ -16,16 +16,32 @@ function buildCacheKey(params: FlightSearchParams): string {
   ].join('|');
 }
 
+export interface CacheCheckResult {
+  cached: boolean;
+  cachedAt?: string;
+  resultCount?: number;
+}
+
 /** Check which cache keys exist from a list of search param combos (within visible window) */
-export async function checkCachedKeys(combos: FlightSearchParams[]): Promise<boolean[]> {
-  const results: boolean[] = [];
+export async function checkCachedKeys(combos: FlightSearchParams[]): Promise<CacheCheckResult[]> {
+  const results: CacheCheckResult[] = [];
   for (const params of combos) {
     const key = buildCacheKey(params);
     const { rows } = await pool.query(
-      "SELECT 1 FROM queries WHERE cache_key = $1 AND created_at::timestamptz >= NOW() - INTERVAL '1 day' * $2",
+      `SELECT q.created_at, COUNT(r.id)::int AS result_count
+       FROM queries q
+       LEFT JOIN results r ON r.query_id = q.id
+       WHERE q.cache_key = $1 AND q.created_at::timestamptz >= NOW() - INTERVAL '1 day' * $2
+       GROUP BY q.id
+       ORDER BY q.created_at DESC
+       LIMIT 1`,
       [key, CACHE_VISIBLE_DAYS]
     );
-    results.push(rows.length > 0);
+    if (rows.length > 0) {
+      results.push({ cached: true, cachedAt: rows[0].created_at, resultCount: rows[0].result_count });
+    } else {
+      results.push({ cached: false });
+    }
   }
   return results;
 }

@@ -64,6 +64,7 @@ const REGION_CURRENCY: Record<string, string> = {
 };
 
 export type ResultViewMode = 'build' | 'table' | 'time' | 'od' | 'map';
+export type SearchMode = 'cached' | 'fill' | 'refresh';
 
 export interface SearchState {
   // Search query fields
@@ -75,10 +76,11 @@ export interface SearchState {
   passengers: number;
   currency: string;
   cabin: string;
-  liveSearch: boolean;
+  searchMode: SearchMode;
 
   // Results & UI state
   results: FlightSearchResult[];
+  comboResults: Map<string, number>; // key: "origin-dest-date", value: result count (-1 = failed)
   error: string;
   loading: boolean;
   searchProgress: { completed: number; total: number } | null;
@@ -101,9 +103,10 @@ export const useFlightSearchStore = create<FlightSearchStore>((set) => ({
     passengers: 1,
     currency: getLocalCurrency(),
     cabin: 'Economy',
-    liveSearch: false,
+    searchMode: 'cached' as SearchMode,
 
     results: [],
+    comboResults: new Map(),
     error: '',
     loading: false,
     searchProgress: null,

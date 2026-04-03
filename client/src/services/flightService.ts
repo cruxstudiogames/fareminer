@@ -74,23 +74,29 @@ export async function searchCachedFlights(params: {
   return data.results;
 }
 
-/** Check which O/D/date combos are already cached */
+export interface CacheCheckResult {
+  cached: boolean;
+  cachedAt?: string;
+  resultCount?: number;
+}
+
+/** Check which O/D/date combos are already cached, with metadata */
 export async function checkCachedCombos(combos: {
   origin: string;
   destination: string;
   departureDate: string;
   adults: number;
   currency?: string;
-}[]): Promise<boolean[]> {
+}[]): Promise<CacheCheckResult[]> {
   const response = await fetch('/api/cache/check', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({ combos }),
   });
-  if (!response.ok) return combos.map(() => false);
-  const data = (await response.json()) as { cached: boolean[] };
-  return data.cached;
+  if (!response.ok) return combos.map(() => ({ cached: false }));
+  const data = (await response.json()) as { results: CacheCheckResult[] };
+  return data.results;
 }
 
 /** Generate all dates in a range, optionally filtered by day of week */

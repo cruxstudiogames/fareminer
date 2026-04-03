@@ -13,7 +13,7 @@ cacheRouter.post('/check', async (req, res) => {
       return;
     }
     const results = await checkCachedKeys(combos);
-    res.json({ cached: results });
+    res.json({ results });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     logger.error({ err }, 'Cache check error');
