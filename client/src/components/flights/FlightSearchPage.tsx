@@ -248,8 +248,11 @@ export function FlightSearchPage() {
 
   const handleRefreshRow = useCallback(async (combo: { origin: string; destination: string; departureDate: string; adults: number; currency?: string; cabin?: string }) => {
     const comboKey = `${combo.origin}-${combo.destination}-${combo.departureDate}`;
+    // Read fresh state at each write to avoid races when multiple rows refresh concurrently
+    const getState = () => useFlightSearchStore.getState().search;
     // Mark as loading
-    const updated = new Map(s.comboResults);
+    const cur = getState();
+    const updated = new Map(cur.comboResults);
     updated.set(comboKey, -2); // -2 = loading
     set({ comboResults: updated });
     try {
@@ -261,20 +264,22 @@ export function FlightSearchPage() {
         currency: combo.currency,
         cabin: combo.cabin,
       });
-      const next = new Map(s.comboResults);
+      const latest = getState();
+      const next = new Map(latest.comboResults);
       next.set(comboKey, results.length);
       // Merge new results: remove old results for this combo, add new ones
-      const filtered = s.results.filter((r) => {
+      const filtered = latest.results.filter((r: FlightSearchResult) => {
         const dep = r.departureAt.split('T')[0];
         return !(r.origin === combo.origin && r.destination === combo.destination && dep === combo.departureDate);
       });
       set({ results: [...filtered, ...results], comboResults: next });
     } catch {
-      const next = new Map(s.comboResults);
+      const latest = getState();
+      const next = new Map(latest.comboResults);
       next.set(comboKey, -1);
       set({ comboResults: next });
     }
-  }, [s.comboResults, s.results, set]);
+  }, [set]);
 
   const handleODCellClick = useCallback((origin: string, destination: string) => {
     set({
