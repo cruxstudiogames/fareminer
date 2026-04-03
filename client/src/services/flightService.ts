@@ -62,7 +62,6 @@ export async function searchCachedFlights(params: {
   }
   query.set('tripType', 'oneway');
   query.set('all', 'true');
-  query.set('limit', '2000');
 
   const response = await fetch(`/api/cache/search?${query}`, { credentials: 'include' });
 

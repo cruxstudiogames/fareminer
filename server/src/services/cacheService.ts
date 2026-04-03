@@ -195,7 +195,9 @@ export async function searchCachedResults(filters: CacheSearchFilters, userId?: 
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const limit = filters.limit && filters.limit > 0 ? filters.limit : 500;
+
+  const limitClause = filters.limit && filters.limit > 0 ? `LIMIT $${paramIdx}` : '';
+  const limitParams = filters.limit && filters.limit > 0 ? [filters.limit] : [];
 
   const { rows } = await pool.query(`
     SELECT r.*, q.departure_date AS query_departure_date, q.return_date AS query_return_date,
@@ -204,8 +206,8 @@ export async function searchCachedResults(filters: CacheSearchFilters, userId?: 
     JOIN queries q ON q.id = r.query_id
     ${where}
     ORDER BY r.total_price ASC
-    LIMIT $${paramIdx}
-  `, [...params, limit]);
+    ${limitClause}
+  `, [...params, ...limitParams]);
 
   return rows.map((row: Record<string, unknown>) => ({
     ...mapRowToResult(row),
