@@ -103,7 +103,7 @@ async function start() {
   const evicted = await evictOldCache();
   if (evicted > 0) logger.info({ evicted }, 'Cache eviction on startup');
 
-  app.listen(PORT, () => {
+  app.listen(PORT, '::', () => {
     logger.info({ port: PORT }, 'Server running');
   });
 }
