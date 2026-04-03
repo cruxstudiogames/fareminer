@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ChevronUp, ChevronDown, X, ArrowRight, Plane } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { ChevronUp, ChevronDown, X, ArrowRight, Plane, ClipboardCopy, Check } from 'lucide-react';
 import type { FlightSearchResult, FlightSegment, CacheSearchResult } from '../../types';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { parseDuration, formatDuration, formatMinutes } from '../../utils/flightUtils';
@@ -96,6 +96,7 @@ export function FlightResultsTable({ results, passengers: _passengers, showCache
   const [sortKey, setSortKey] = useState<SortKey>('totalPrice');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [selectedFlight, setSelectedFlight] = useState<FlightSearchResult | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -124,6 +125,32 @@ export function FlightResultsTable({ results, passengers: _passengers, showCache
       ? <ChevronUp className="w-3 h-3 text-blue-600" />
       : <ChevronDown className="w-3 h-3 text-blue-600" />;
   };
+
+  const copyToClipboard = useCallback(() => {
+    const headers = ['Route', 'Date', 'Dep', 'Arr', 'Carrier', 'Duration', 'Stops', 'Stop Codes', 'Layover', 'Per Person', 'Total'];
+    const rows = sorted.map((r) => {
+      const outCarriers = r.segments?.length > 0 ? carrierNames(r.segments) : r.airlineName;
+      const outStopover = r.segments?.length > 1 ? stopoverDuration(r.segments) : 0;
+      return [
+        `${r.origin}-${r.destination}`,
+        formatDateShort(r.departureAt),
+        formatTime(r.departureAt),
+        formatTime(r.arrivalAt),
+        outCarriers,
+        formatDuration(r.duration),
+        r.stops === 0 ? 'Direct' : String(r.stops),
+        r.stopCodes.join(', '),
+        outStopover > 0 ? formatMinutes(outStopover) : '',
+        r.pricePerPerson.toFixed(2),
+        r.totalPrice.toFixed(2),
+      ].join('\t');
+    });
+    const tsv = [headers.join('\t'), ...rows].join('\n');
+    navigator.clipboard.writeText(tsv).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [sorted]);
 
   const thClass = "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:text-gray-700 select-none";
   const thStatic = "px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider";
@@ -173,6 +200,15 @@ export function FlightResultsTable({ results, passengers: _passengers, showCache
 
       {/* Desktop table */}
       <div className="overflow-auto flex-1 hidden sm:block">
+        <div className="flex justify-end px-3 py-1.5 bg-gray-50 border-b border-gray-200">
+          <button
+            onClick={copyToClipboard}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded transition-colors"
+            title="Copy table as TSV (paste into Excel)"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <ClipboardCopy className="w-3.5 h-3.5" />}
+          </button>
+        </div>
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
