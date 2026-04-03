@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useRef, useEffect, useState } from 'react';
-import { Search, Loader2, Table2, Map as MapIcon, Grid3x3, BarChart3, List } from 'lucide-react';
+import { Search, Loader2, Table2, Map as MapIcon, Grid3x3, BarChart3, List, RefreshCw } from 'lucide-react';
 import { searchFlights, searchCachedFlights, generateDatesInRange, checkCachedCombos, type CacheCheckResult } from '../../services/flightService';
 import { FlightResultsTable } from './FlightResultsTable';
 import { FlightMap } from './FlightMap';
@@ -245,6 +245,36 @@ export function FlightSearchPage() {
         : [...s.daysOfWeek, jsDay],
     });
   }, [s.daysOfWeek, set]);
+
+  const handleRefreshRow = useCallback(async (combo: { origin: string; destination: string; departureDate: string; adults: number; currency?: string; cabin?: string }) => {
+    const comboKey = `${combo.origin}-${combo.destination}-${combo.departureDate}`;
+    // Mark as loading
+    const updated = new Map(s.comboResults);
+    updated.set(comboKey, -2); // -2 = loading
+    set({ comboResults: updated });
+    try {
+      const results = await searchFlights({
+        origin: combo.origin,
+        destination: combo.destination,
+        departureDate: combo.departureDate,
+        adults: combo.adults,
+        currency: combo.currency,
+        cabin: combo.cabin,
+      });
+      const next = new Map(s.comboResults);
+      next.set(comboKey, results.length);
+      // Merge new results: remove old results for this combo, add new ones
+      const filtered = s.results.filter((r) => {
+        const dep = r.departureAt.split('T')[0];
+        return !(r.origin === combo.origin && r.destination === combo.destination && dep === combo.departureDate);
+      });
+      set({ results: [...filtered, ...results], comboResults: next });
+    } catch {
+      const next = new Map(s.comboResults);
+      next.set(comboKey, -1);
+      set({ comboResults: next });
+    }
+  }, [s.comboResults, s.results, set]);
 
   const handleODCellClick = useCallback((origin: string, destination: string) => {
     set({
@@ -539,7 +569,7 @@ export function FlightSearchPage() {
         {/* Content area */}
         <div className={`flex-1 ${s.viewMode === 'map' ? 'relative' : 'overflow-auto'}`}>
           {s.viewMode === 'build' && (
-            <QueryBuildTable combos={searchCombos} cacheInfo={comboCacheInfo} comboResults={s.comboResults} />
+            <QueryBuildTable combos={searchCombos} cacheInfo={comboCacheInfo} comboResults={s.comboResults} onRefreshRow={handleRefreshRow} />
           )}
           {s.viewMode !== 'build' && s.results.length > 0 && (
             <>
@@ -587,11 +617,163 @@ function formatCacheAge(cachedAt: string): string {
   return `${date} ${time}`;
 }
 
-function QueryBuildTable({ combos, cacheInfo, comboResults }: {
+type BuildSortCol = 'origin' | 'destination' | 'date' | 'cabin' | 'status' | 'flights' | 'refreshed';
+type BuildSortDir = 'asc' | 'desc';
+
+interface BuildFilters {
+  origin: Set<string>;
+  destination: Set<string>;
+  cabin: Set<string>;
+  status: Set<string>;
+}
+
+function getRowStatus(isCached: boolean, resultCount: number | undefined, cachedResultCount: number | undefined): string {
+  if (resultCount === -2) return 'loading';
+  if (resultCount === -1) return 'failed';
+  if (isCached && resultCount === undefined) {
+    return cachedResultCount === 0 ? 'empty' : 'cached';
+  }
+  if (resultCount !== undefined) {
+    return resultCount === 0 ? 'empty' : 'done';
+  }
+  return 'new';
+}
+
+function getRowFlights(resultCount: number | undefined, cachedResultCount: number | undefined): number {
+  if (resultCount !== undefined && resultCount >= 0) return resultCount;
+  if (cachedResultCount !== undefined) return cachedResultCount;
+  return -Infinity; // unknown sorts last
+}
+
+function FilterDropdown({ values, selected, onChange }: {
+  values: string[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const active = selected.size > 0 && selected.size < values.length;
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`ml-1 text-[9px] leading-none align-middle ${active ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+        title="Filter"
+      >
+        {active ? `(${selected.size})` : '▼'}
+      </button>
+      {open && (
+        <div className="absolute z-20 top-full left-0 mt-1 bg-white border border-gray-200 rounded shadow-lg py-1 min-w-[100px] max-h-48 overflow-auto">
+          <button
+            type="button"
+            className="block w-full text-left px-2 py-0.5 text-[10px] text-blue-600 hover:bg-gray-50"
+            onClick={() => { onChange(new Set()); setOpen(false); }}
+          >
+            Show all
+          </button>
+          {values.map((v) => (
+            <label key={v} className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] hover:bg-gray-50 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selected.size === 0 || selected.has(v)}
+                onChange={(e) => {
+                  const next = new Set(selected.size === 0 ? values : selected);
+                  if (e.target.checked) next.add(v); else next.delete(v);
+                  onChange(next.size === values.length ? new Set() : next);
+                }}
+                className="rounded border-gray-300"
+              />
+              {v}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QueryBuildTable({ combos, cacheInfo, comboResults, onRefreshRow }: {
   combos: { origin: string; destination: string; departureDate: string; adults: number; currency?: string; cabin?: string }[];
   cacheInfo: CacheCheckResult[] | null;
   comboResults: Map<string, number>;
+  onRefreshRow: (combo: { origin: string; destination: string; departureDate: string; adults: number; currency?: string; cabin?: string }) => void;
 }) {
+  const [sortCol, setSortCol] = useState<BuildSortCol | null>(null);
+  const [sortDir, setSortDir] = useState<BuildSortDir>('asc');
+  const [filters, setFilters] = useState<BuildFilters>({ origin: new Set(), destination: new Set(), cabin: new Set(), status: new Set() });
+
+  const toggleSort = useCallback((col: BuildSortCol) => {
+    if (sortCol === col) {
+      setSortDir((d) => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortCol(col);
+      setSortDir('asc');
+    }
+  }, [sortCol]);
+
+  // Build enriched rows with index preserved
+  const rows = useMemo(() => combos.map((combo, i) => {
+    const info = cacheInfo?.[i];
+    const isCached = info?.cached ?? false;
+    const comboKey = `${combo.origin}-${combo.destination}-${combo.departureDate}`;
+    const resultCount = comboResults.get(comboKey);
+    const status = getRowStatus(isCached, resultCount, info?.resultCount);
+    const flights = getRowFlights(resultCount, info?.resultCount);
+    return { combo, info, resultCount, isCached, status, flights, comboKey, idx: i };
+  }), [combos, cacheInfo, comboResults]);
+
+  // Unique values for filter dropdowns
+  const uniqueOrigins = useMemo(() => [...new Set(combos.map((c) => c.origin))].sort(), [combos]);
+  const uniqueDestinations = useMemo(() => [...new Set(combos.map((c) => c.destination))].sort(), [combos]);
+  const uniqueCabins = useMemo(() => [...new Set(combos.map((c) => c.cabin || 'Economy'))].sort(), [combos]);
+  const uniqueStatuses = useMemo(() => [...new Set(rows.map((r) => r.status))].sort(), [rows]);
+
+  // Filter
+  const filtered = useMemo(() => rows.filter((r) => {
+    if (filters.origin.size > 0 && !filters.origin.has(r.combo.origin)) return false;
+    if (filters.destination.size > 0 && !filters.destination.has(r.combo.destination)) return false;
+    if (filters.cabin.size > 0 && !filters.cabin.has(r.combo.cabin || 'Economy')) return false;
+    if (filters.status.size > 0 && !filters.status.has(r.status)) return false;
+    return true;
+  }), [rows, filters]);
+
+  // Sort
+  const sorted = useMemo(() => {
+    if (!sortCol) return filtered;
+    const arr = [...filtered];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    arr.sort((a, b) => {
+      let cmp = 0;
+      switch (sortCol) {
+        case 'origin': cmp = a.combo.origin.localeCompare(b.combo.origin); break;
+        case 'destination': cmp = a.combo.destination.localeCompare(b.combo.destination); break;
+        case 'date': cmp = a.combo.departureDate.localeCompare(b.combo.departureDate); break;
+        case 'cabin': cmp = (a.combo.cabin || 'Economy').localeCompare(b.combo.cabin || 'Economy'); break;
+        case 'status': cmp = a.status.localeCompare(b.status); break;
+        case 'flights': cmp = a.flights - b.flights; break;
+        case 'refreshed': {
+          const aT = a.info?.cachedAt ? new Date(a.info.cachedAt).getTime() : 0;
+          const bT = b.info?.cachedAt ? new Date(b.info.cachedAt).getTime() : 0;
+          cmp = aT - bT;
+          break;
+        }
+      }
+      return cmp * dir;
+    });
+    return arr;
+  }, [filtered, sortCol, sortDir]);
+
   if (combos.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400 text-sm p-4 h-full">
@@ -603,42 +785,62 @@ function QueryBuildTable({ combos, cacheInfo, comboResults }: {
   const cachedCount = cacheInfo ? cacheInfo.filter((c) => c.cached).length : 0;
   const freshCount = cacheInfo ? cacheInfo.length - cachedCount : combos.length;
 
+  const sortIndicator = (col: BuildSortCol) => sortCol === col ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
+
+  const thClass = 'text-left px-3 py-1.5 font-medium border-b border-gray-200 cursor-pointer select-none hover:text-gray-900 whitespace-nowrap';
+
   return (
     <div className="p-4">
-      <div className="mb-3 text-xs text-gray-500">
-        {combos.length} quer{combos.length !== 1 ? 'ies' : 'y'}:
-        {cacheInfo && (
-          <>
-            {' '}<span className="text-green-600 font-medium">{cachedCount} cached</span>,
-            {' '}<span className="text-amber-600 font-medium">{freshCount} new</span>
-          </>
+      <div className="mb-3 text-xs text-gray-500 flex items-center gap-2">
+        <span>
+          {combos.length} quer{combos.length !== 1 ? 'ies' : 'y'}:
+          {cacheInfo && (
+            <>
+              {' '}<span className="text-green-600 font-medium">{cachedCount} cached</span>,
+              {' '}<span className="text-amber-600 font-medium">{freshCount} new</span>
+            </>
+          )}
+        </span>
+        {filtered.length !== rows.length && (
+          <span className="text-blue-600">(showing {filtered.length})</span>
         )}
       </div>
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="bg-gray-100 text-gray-600">
             <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">#</th>
-            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Origin</th>
-            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Destination</th>
-            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Date</th>
-            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Cabin</th>
-            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Status</th>
-            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Flights</th>
-            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200">Last Refreshed</th>
+            <th className={thClass} onClick={() => toggleSort('origin')}>
+              Origin{sortIndicator('origin')}
+              {uniqueOrigins.length > 1 && <FilterDropdown values={uniqueOrigins} selected={filters.origin} onChange={(s) => setFilters((f) => ({ ...f, origin: s }))} />}
+            </th>
+            <th className={thClass} onClick={() => toggleSort('destination')}>
+              Dest{sortIndicator('destination')}
+              {uniqueDestinations.length > 1 && <FilterDropdown values={uniqueDestinations} selected={filters.destination} onChange={(s) => setFilters((f) => ({ ...f, destination: s }))} />}
+            </th>
+            <th className={thClass} onClick={() => toggleSort('date')}>Date{sortIndicator('date')}</th>
+            <th className={thClass} onClick={() => toggleSort('cabin')}>
+              Cabin{sortIndicator('cabin')}
+              {uniqueCabins.length > 1 && <FilterDropdown values={uniqueCabins} selected={filters.cabin} onChange={(s) => setFilters((f) => ({ ...f, cabin: s }))} />}
+            </th>
+            <th className={thClass} onClick={() => toggleSort('status')}>
+              Status{sortIndicator('status')}
+              {uniqueStatuses.length > 1 && <FilterDropdown values={uniqueStatuses} selected={filters.status} onChange={(s) => setFilters((f) => ({ ...f, status: s }))} />}
+            </th>
+            <th className={thClass} onClick={() => toggleSort('flights')}>Flights{sortIndicator('flights')}</th>
+            <th className={thClass} onClick={() => toggleSort('refreshed')}>Last Refreshed{sortIndicator('refreshed')}</th>
+            <th className="text-left px-3 py-1.5 font-medium border-b border-gray-200"></th>
           </tr>
         </thead>
         <tbody>
-          {combos.map((combo, i) => {
-            const info = cacheInfo?.[i];
-            const isCached = info?.cached ?? false;
-            const comboKey = `${combo.origin}-${combo.destination}-${combo.departureDate}`;
-            const resultCount = comboResults.get(comboKey);
+          {sorted.map((row) => {
+            const { combo, info, resultCount, isCached, status, comboKey } = row;
+            const isLoading = resultCount === -2;
             const isFailed = resultCount === -1;
-            const isZero = resultCount === 0;
+            const isZero = status === 'empty';
             const rowBg = isFailed ? 'bg-red-50' : (isZero ? 'bg-amber-50' : '');
             return (
-              <tr key={i} className={`border-b border-gray-100 hover:bg-gray-50 ${rowBg}`}>
-                <td className="px-3 py-1.5 text-gray-400">{i + 1}</td>
+              <tr key={comboKey} className={`border-b border-gray-100 hover:bg-gray-50 ${rowBg}`}>
+                <td className="px-3 py-1.5 text-gray-400">{row.idx + 1}</td>
                 <td className="px-3 py-1.5 font-mono">{combo.origin}</td>
                 <td className="px-3 py-1.5 font-mono">{combo.destination}</td>
                 <td className="px-3 py-1.5">{combo.departureDate}</td>
@@ -646,10 +848,12 @@ function QueryBuildTable({ combos, cacheInfo, comboResults }: {
                 <td className="px-3 py-1.5">
                   {cacheInfo === null ? (
                     <span className="text-gray-400">checking...</span>
+                  ) : isLoading ? (
+                    <Loader2 className="w-3 h-3 animate-spin text-blue-500 inline" />
                   ) : isFailed ? (
                     <span className="text-red-600 font-medium">failed</span>
-                  ) : isCached ? (
-                    <span className="text-green-600 font-medium">cached</span>
+                  ) : isCached && resultCount === undefined ? (
+                    <span className={`font-medium ${isZero ? 'text-amber-600' : 'text-green-600'}`}>cached</span>
                   ) : resultCount !== undefined ? (
                     <span className="text-green-600 font-medium">done</span>
                   ) : (
@@ -657,18 +861,32 @@ function QueryBuildTable({ combos, cacheInfo, comboResults }: {
                   )}
                 </td>
                 <td className="px-3 py-1.5">
-                  {isFailed ? (
+                  {isLoading ? (
+                    <span className="text-gray-400">...</span>
+                  ) : isFailed ? (
                     <span className="text-red-500">--</span>
-                  ) : resultCount !== undefined ? (
-                    <span className={isZero ? 'text-amber-600 font-medium' : ''}>{resultCount}</span>
+                  ) : resultCount !== undefined && resultCount >= 0 ? (
+                    <span className={resultCount === 0 ? 'text-amber-600 font-medium' : ''}>{resultCount}</span>
                   ) : info?.resultCount !== undefined ? (
-                    <span>{info.resultCount}</span>
+                    <span className={info.resultCount === 0 ? 'text-amber-600 font-medium' : ''}>{info.resultCount}</span>
                   ) : (
                     <span className="text-gray-300">--</span>
                   )}
                 </td>
                 <td className="px-3 py-1.5 text-gray-400">
                   {info?.cachedAt ? formatCacheAge(info.cachedAt) : '--'}
+                </td>
+                <td className="px-3 py-1.5">
+                  {!isLoading && (
+                    <button
+                      type="button"
+                      onClick={() => onRefreshRow(combo)}
+                      className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-blue-600 transition-colors"
+                      title="Refresh this query"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                    </button>
+                  )}
                 </td>
               </tr>
             );
